@@ -28,7 +28,7 @@ fn main() {
 
 	if input.is_empty() {
 		// Host the server
-		print!("How many other players are you expecting? (0-5) ");
+		print!("How many other players are you expecting? (1-5) ");
 		std::io::stdout().flush().unwrap();
 
 		// Put this in a loop, to just get that info from the host
@@ -41,8 +41,9 @@ fn main() {
 				println!("\x1b[1mBro I said 5 is maximum!\x1b[0m");
 				continue;
 			}
-			if player_count == 0 {
-				println!("\x1b[1m( •_•) Playing with yourself I see?\x1b[0m");
+			if player_count < 1 {
+				println!("\x1b[1m( •_•) If you want to play with yourself, play \x1b[4msnake\x1b[24m, not \x1b[4mmultisnake\x1b[0m");
+				continue;
 			}
 			break;
 		}
