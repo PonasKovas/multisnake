@@ -1,98 +1,234 @@
-#![feature(vec_remove_item)]
-
-mod shared;
+#[cfg(feature = "server")]
 mod server;
-mod client;
+//#[cfg(feature = "client")]
+//mod client;
 
-use crossterm_input::{input, AsyncReader, InputEvent, KeyEvent, RawScreen};
-use rand::prelude::*;
-use std::collections::{HashSet, VecDeque, HashMap};
-use std::thread::sleep;
-use std::time::Duration;
-use std::io::prelude::*;
-use std::net::{TcpListener, TcpStream, Shutdown};
-use std::convert::TryInto;
-
-use shared::*;
+use clap::{Arg, App};
+use std::net::Ipv4Addr;
+use std::io::{stdin, BufRead};
 
 fn main() {
-	// First ask the player if they want to host the server or to connect to another server
-	println!("Would you like to host the server, or connect to a server?");
-	print!("If you would like to connect to a server, type the IP,\nand if you want to host a server, just press enter: ");
-	std::io::stdout().flush().unwrap();
-	let mut input = String::new();
+	let max_players_help = format!("[Server] Player limit for the server (Default {default}) ({min}-{max})",
+							   		default=server::DEFAULT_MAX_PLAYERS,
+							   		min=u16::min_value(),
+							   		max=u16::max_value());
+	let game_speed_help = format!("[Server] Ticks per second (Default {default}) ({min}-{max})",
+							   		default=server::DEFAULT_GAME_SPEED,
+							   		min=u8::min_value()+1,
+							   		max=u8::max_value());
+	let world_size_help = format!("[Server] The size of the world (Default {default_width}x{default_height}) ({min}-{max})",
+							   		default_width=server::DEFAULT_WORLD_SIZE.0,
+							   		default_height=server::DEFAULT_WORLD_SIZE.1,
+							   		min=u16::min_value()+20,
+							   		max=u16::max_value());
+	let food_rate_help = format!("[Server] Rate of how much food should be constantly in the world in relation to the world size, bigger number = less food (Default {default}) ({min}-{max})",
+							   		default=server::DEFAULT_FOOD_RATE,
+							   		min=u8::min_value()+2,
+							   		max=u8::max_value());
 
-	std::io::stdin().read_line(&mut input).unwrap();
-	
-	input = input.trim().to_owned(); // remove the \n from the end, and maybe other whitespace
 
-	if input.is_empty() {
-		// Host the server
-		print!("How many other players are you expecting? (1-5) ");
-		std::io::stdout().flush().unwrap();
-
-		// Put this in a loop, to just get that info from the host
-		let mut player_count: u8;
-		loop {
-			let mut raw_player_count = String::new();
-			std::io::stdin().read_line(&mut raw_player_count).unwrap();
-			player_count = match raw_player_count.trim().parse() { Err(_) => { println!("\x1b[1mSorry but I can't parse this number. Please rethink your choice\x1b[0m"); continue; }, Ok(i) => i};
-			if player_count > 5 {
-				println!("\x1b[1mBro I said 5 is maximum!\x1b[0m");
-				continue;
-			}
-			if player_count < 1 {
-				println!("\x1b[1m( •_•) If you want to play with yourself, play \x1b[4msnake\x1b[24m, not \x1b[4mmultisnake\x1b[0m");
-				continue;
-			}
-			break;
-		}
-
-		// Ask for the game speed
-		print!("What do you want the game speed to be? (1-250, Default=5) ");
-		std::io::stdout().flush().unwrap();
-
-		// Again, put in a loop so the host can have a normal conversation with me
-		let mut game_speed: u8;
-		loop {
-			let mut raw_game_speed = String::new();
-			std::io::stdin().read_line(&mut raw_game_speed).unwrap();
-			game_speed = if raw_game_speed.trim().len()==0 { 5 } else { match raw_game_speed.trim().parse() {
-				Err(_) => {println!("\x1b[1mcan you just enter a normal number\x1b[0m"); continue; },
-				Ok(i) => i
-			} };
-			if game_speed < 1 {
-				println!("\x1b[1mBro... I'm sure you're not that bad at this game. Try higher speeds\x1b[0m");
-				continue;
-			}
-			if game_speed > 250 {
-				println!("\x1b[1mThis would be too fast for you bro\x1b[0m");
-				continue;
-			}
-			break;
-		}
-		// Ok good, we finally have all the data
-
-		println!("Hosting server...");
-		let mut server = server::Server::new(game_speed);
-		server.start_server(player_count);
-	} else {
-		// Try to connect to the server
-		let mut client = match client::Client::connect(format!("{}:50403", input)) {
-			Err(e) => {
-				println!("Failed to connect to the server: {}", e);
-				return;
-			},
-			Ok(client) => client
-		};
-		println!("Connected successfully!");
-		println!("Waiting for others to join...");
-		if let Err(()) = client.wait_for_start() {
-			println!("\x1b[1mThe connection with the server was dropped.\x1b[0m");
-			return;
-		}
-		println!("Starting game...");
-		client.start_game();
+	let mut matches = App::new("Multisnake")
+						   .version("0.1.0")
+						   .author("Ponas Kovas")
+						   .about("A multiplayer online snake game");
+	#[cfg(feature = "server")]
+	{
+		matches = matches.arg(Arg::with_name("server")
+						   .long("server")
+						   .help("Starts as server instead of client")
+						   .takes_value(false)
+						   .conflicts_with("client"))
+						.arg(Arg::with_name("max_players")
+						   .short("m")
+						   .long("max-players")
+						   .help(&max_players_help)
+						   .takes_value(true)
+						   .value_name("PLAYERS")
+						   .conflicts_with("client"))
+						.arg(Arg::with_name("game_speed")
+						   .short("s")
+						   .long("game-speed")
+						   .help(&game_speed_help)
+						   .takes_value(true)
+						   .value_name("SPEED")
+						   .conflicts_with("client"))
+						.arg(Arg::with_name("world_size")
+						   .short("w")
+						   .long("world-size")
+						   .help(&world_size_help)
+						   .takes_value(true)
+						   .value_name("WIDTHxHEIGHT")
+						   .conflicts_with("client"))
+						.arg(Arg::with_name("food_rate")
+						   .short("f")
+						   .long("food-rate")
+						   .help(&food_rate_help)
+						   .takes_value(true)
+						   .value_name("RATE")
+						   .conflicts_with("client"));
+	}
+	#[cfg(feature = "client")]
+	{
+		matches = matches.arg(Arg::with_name("client")
+						   .long("client")
+						   .help("Starts as client (default behaviour)")
+						   .takes_value(false)
+						   .conflicts_with("server"))
+					  .arg(Arg::with_name("ip")
+						   .short("i")
+						   .long("ip")
+						   .help("[Client] tries to connect to server on this IP")
+						   .value_name("IP")
+						   .takes_value(true)
+						   .conflicts_with("server"))
+					  .arg(Arg::with_name("nickname")
+						   .short("n")
+						   .long("nickname")
+						   .help("[Client] your nickname (length 1-20)")
+						   .value_name("NICKNAME")
+						   .takes_value(true)
+						   .conflicts_with("server"));
+	}
+	#[cfg(any(feature = "client", feature = "server"))]
+	{
+		matches = matches.arg(Arg::with_name("port")
+						   .short("p")
+						   .long("port")
+						   .value_name("PORT")
+						   .help("initializes server on this port (default 50403) or tries to connect to server on this port if started in client mode")
+						   .takes_value(true));
 	}
 
+	let matches = matches.get_matches();
+
+	if matches.is_present("server") || cfg!(all(feature = "server", not(feature = "client"))) { // Server
+		let port: u16 = match matches.value_of("port").unwrap_or("50403").parse() {
+			Ok(n) => n,
+			Err(_) => {
+				println!("Failed to parse port!");
+				return;
+			}
+		};
+		let max_players: u16 = match matches.value_of("max_players").unwrap_or(&server::DEFAULT_MAX_PLAYERS.to_string()).parse() {
+			Ok(n) => n,
+			Err(_) => {
+				println!("Failed to parse max players!");
+				return;
+			}
+		};
+		let game_speed: u8 = match matches.value_of("game_speed").unwrap_or(&server::DEFAULT_GAME_SPEED.to_string()).parse() {
+			Ok(n) => {
+				if n == 0 {
+					println!("Game speed can't be 0!");
+					return
+				}
+				n
+			},
+			Err(_) => {
+				println!("Failed to parse game speed!");
+				return;
+			}
+		};
+		let world_size: (u16, u16) = match matches.value_of("world_size") {
+			Some(n) => {
+				let p: Vec<&str> = n.split("x").collect();
+				if p.len() != 2 {
+					println!("Failed to parse world size!");
+					return;
+				}
+				let w: u16 = match p[0].parse() {
+					Ok(i) => i,
+					Err(_) => {
+						println!("Failed to parse world size!");
+						return;
+					}
+				};
+				let h: u16 = match p[1].parse() {
+					Ok(i) => i,
+					Err(_) => {
+						println!("Failed to parse world size!");
+						return;
+					}
+				};
+				if w < 20 || h < 20 {
+					println!("World can't be that small!");
+					return;
+				}
+				(w, h)
+			},
+			None => {
+				server::DEFAULT_WORLD_SIZE
+			}
+		};
+		let food_rate: u8 = match matches.value_of("food_rate").unwrap_or(&server::DEFAULT_FOOD_RATE.to_string()).parse() {
+			Ok(n) => {
+				if n < 2 {
+					println!("Food rate can not be 0 or 1!");
+					return;
+				}
+				n
+			},
+			Err(_) => {
+				println!("Failed to parse food rate!");
+				return;
+			}
+		};
+
+		server::Server::start(max_players, game_speed, port, world_size, food_rate);
+
+	} else if cfg!(feature = "client") { // Client
+		let ip: Ipv4Addr = match matches.value_of("ip") {
+			Some(ip) => match ip.parse() {
+				Ok(a) => a,
+				Err(_) => {
+					println!("Failed to parse IP!");
+					return;
+				}
+			},
+			None => {
+				println!("Please enter the IP of the server you want to connect to:");
+				match stdin().lock().lines().next().unwrap().unwrap().parse() {
+					Ok(a) => a,
+					Err(_) => {
+						println!("Failed to parse IP!");
+						return;
+					}
+				}
+			}
+		};
+		let port: u16 = match matches.value_of("port") {
+			Some(n) => match n.parse() {
+				Ok(p) => p,
+				Err(_) => {
+					println!("Can't parse port!");
+					return;
+				}
+			},
+			None => {
+				println!("Please enter the PORT of the server you want to connect to (press ENTER for default 50403):");
+				let input = stdin().lock().lines().next().unwrap().unwrap();
+				if input.len() == 0 { 50403 } else {
+					match input.parse() {
+						Ok(a) => a,
+						Err(_) => {
+							println!("Failed to parse PORT!");
+							return;
+						}
+					}
+				}
+			}
+		};
+		let nickname: String = match matches.value_of("nickname") {
+			Some(nickname) => nickname.to_string(),
+			None => {
+				println!("Choose a nickname:");
+				stdin().lock().lines().next().unwrap().unwrap()
+			}
+		};
+		if nickname.len() < 1 || nickname.len() > 20 {
+			println!("Nickname too short/too long. Allowed length 1-20");
+			return;
+		}
+		println!("{}:{} with nickname {}", ip, port, nickname);
+	}
 }
