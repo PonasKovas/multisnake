@@ -301,6 +301,8 @@ pub fn draw(
     let height = (-(frame_size.1 as i16 / 2) as i8)
         ..((frame_size.1 as i16 - (frame_size.1 as i16 / 2)) as i8);
 
+    let right_side_padding = &" ".repeat(real_terminal_size.0 as usize - width.clone().count() * 2);
+
     // Iterate through all fields in the constructed ranges and check if there's anything there
     for y in height {
         for x in width.clone() {
@@ -335,7 +337,7 @@ pub fn draw(
                 to_print += "  "; // a background colored square
             }
         }
-        to_print += "\r\n";
+        to_print += right_side_padding;
     }
     // Add the status bar at the bottom
     let status_text = format!(
@@ -347,14 +349,14 @@ pub fn draw(
         kills_place = get_place_by_kills(&snakes_info, my_id)
     );
     let position_text = if real_terminal_size.0 as usize >= status_text.len() + 8 {
-	        format!(
-	            "{:3.0}#{:3.0}",
-	            (1000f64 * my_pos.0 as f64 / world_size.0 as f64),
-	            (1000f64 * my_pos.1 as f64 / world_size.1 as f64)
-	        )
-	    } else {
-	        "".to_string()
-	    };
+        format!(
+            "{:3.0}#{:3.0}",
+            (1000f64 * my_pos.0 as f64 / world_size.0 as f64),
+            (1000f64 * my_pos.1 as f64 / world_size.1 as f64)
+        )
+    } else {
+        "".to_string()
+    };
     to_print += &(SNAKE_COLORS[(my_id % 6) as usize].to_owned() + "\x1b[30m"); // colors
     to_print += &" ".repeat(
         ((real_terminal_size.0 as usize - status_text.len()) as f64 / 2f64).floor() as usize,

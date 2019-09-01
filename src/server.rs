@@ -198,8 +198,7 @@ impl Server {
         }
         // Ok now add it to the game
         if self.foods.contains_key(&food_pos) {
-            *self.foods.get_mut(&food_pos).unwrap() =
-                self.foods[&food_pos].saturating_add(1);
+            *self.foods.get_mut(&food_pos).unwrap() = self.foods[&food_pos].saturating_add(1);
         } else {
             self.foods.insert(food_pos, 1);
         }
@@ -324,8 +323,7 @@ impl Server {
                     temp_parts.nth(2);
                     for part in temp_parts {
                         if self.foods.contains_key(part) {
-                            *self.foods.get_mut(part).unwrap() =
-                                self.foods[part].saturating_add(1);
+                            *self.foods.get_mut(part).unwrap() = self.foods[part].saturating_add(1);
                         } else {
                             self.foods.insert(*part, 1);
                         }
@@ -420,7 +418,7 @@ impl Server {
         // Move each snake to it's facing direction
         let ids: Vec<u16> = self.players.keys().copied().collect();
         'snake: for snake_id in ids {
-        	println!("moving");
+            println!("moving");
             // If snake not long enough anymore, turn of fast mode
             if self.players[&snake_id].fast_mode && self.players[&snake_id].score < 1 {
                 self.players.get_mut(&snake_id).unwrap().fast_mode = false;
@@ -430,11 +428,17 @@ impl Server {
 
             // If snake in fast mode
             if self.players[&snake_id].fast_mode {
-            	// Remove 1 score
-            	println!("removing score 430");
+                // Remove 1 score
+                println!("removing score 430");
                 self.players.get_mut(&snake_id).unwrap().score -= 1;
                 // Remove 1 part from tail
-                let tail_pos = self.players.get_mut(&snake_id).unwrap().parts.pop_front().unwrap();
+                let tail_pos = self
+                    .players
+                    .get_mut(&snake_id)
+                    .unwrap()
+                    .parts
+                    .pop_front()
+                    .unwrap();
                 self.snake_parts.get_mut(&tail_pos).unwrap().1 -= 1;
                 // Only remove from the hashset if there are no more parts on that position
                 if self.snake_parts[&tail_pos].1 == 0 {
@@ -442,9 +446,10 @@ impl Server {
                 }
                 // add food where the part was
                 if self.foods.contains_key(&tail_pos) {
-                	*self.foods.get_mut(&tail_pos).unwrap() = self.foods[&tail_pos].saturating_add(1);
+                    *self.foods.get_mut(&tail_pos).unwrap() =
+                        self.foods[&tail_pos].saturating_add(1);
                 } else {
-                	self.foods.insert(tail_pos, 1);
+                    self.foods.insert(tail_pos, 1);
                 }
                 // And make the snake move twice
                 moves = 2;
@@ -452,111 +457,112 @@ impl Server {
 
             // move it
             for _ in 0..moves {
+                // Change the last_direction
+                self.players.get_mut(&snake_id).unwrap().last_direction =
+                    self.players[&snake_id].direction;
 
-	            // Change the last_direction
-	            self.players.get_mut(&snake_id).unwrap().last_direction =
-	                self.players[&snake_id].direction;
+                // Calculate the new head position
+                let mut new_head_pos = *self.players[&snake_id].parts.back().unwrap();
 
+                let (dx, dy) = self.players[&snake_id].direction.to_vector();
 
-	            // Calculate the new head position
-	            let mut new_head_pos = *self.players[&snake_id].parts.back().unwrap();
+                let width = self.world_size.0 as i32;
+                let height = self.world_size.1 as i32;
+                new_head_pos.0 = (((new_head_pos.0 as i32 + dx) + width) % width) as u16;
+                new_head_pos.1 = (((new_head_pos.1 as i32 + dy) + height) % height) as u16;
 
-	            let (dx, dy) = self.players[&snake_id].direction.to_vector();
+                // If the head is on food, eat it
+                if self.foods.contains_key(&new_head_pos) {
+                    self.players.get_mut(&snake_id).unwrap().score +=
+                        self.foods[&new_head_pos] as u16;
+                    self.foods.remove(&new_head_pos);
+                } else {
+                    // It's impossible to crash and eat food at the same time, so only check if crashed
+                    // if no food was eaten
 
-	            let width = self.world_size.0 as i32;
-	            let height = self.world_size.1 as i32;
-	            new_head_pos.0 = (((new_head_pos.0 as i32 + dx) + width) % width) as u16;
-	            new_head_pos.1 = (((new_head_pos.1 as i32 + dy) + height) % height) as u16;
-
-	            // If the head is on food, eat it
-	            if self.foods.contains_key(&new_head_pos) {
-	                self.players.get_mut(&snake_id).unwrap().score +=
-	                    self.foods[&new_head_pos] as u16;
-	                self.foods.remove(&new_head_pos);
-	            } else {
-	                // It's impossible to crash and eat food at the same time, so only check if crashed
-	                // if no food was eaten
-
-	                if self.snake_parts.contains_key(&new_head_pos) &&
+                    if self.snake_parts.contains_key(&new_head_pos) &&
 					// Make sure it's a foreign snake (not myself)
 					self.snake_parts[&new_head_pos].0 != snake_id
-	                {
-	                    // CRASH!
-	                    // Clean the snakes_parts
-	                    for part in &self.players[&snake_id].parts {
-	                        self.snake_parts.remove(&part);
-	                    }
+                    {
+                        // CRASH!
+                        // Clean the snakes_parts
+                        for part in &self.players[&snake_id].parts {
+                            self.snake_parts.remove(&part);
+                        }
 
-	                    // Add a kill for the snake that killed it
-	                    self.players
-	                        .get_mut(&self.snake_parts[&new_head_pos].0)
-	                        .unwrap()
-	                        .kills += 1;
+                        // Add a kill for the snake that killed it
+                        self.players
+                            .get_mut(&self.snake_parts[&new_head_pos].0)
+                            .unwrap()
+                            .kills += 1;
 
-	                    // Add food where the dead snake was when it died
-	                    // Skip the first 3 parts though, to
-	                    // keep the amount of food circulating the exact same
-	                    let mut temp_parts = self.players[&snake_id].parts.iter();
-	                    // remove the first 3 parts from the iterator
-	                    temp_parts.nth(2);
-	                    for part in temp_parts {
-	                        if self.foods.contains_key(part) {
-	                            *self.foods.get_mut(part).unwrap() =
-	                                self.foods[part].saturating_add(1);
-	                        } else {
-	                            self.foods.insert(*part, 1);
-	                        }
-	                    }
+                        // Add food where the dead snake was when it died
+                        // Skip the first 3 parts though, to
+                        // keep the amount of food circulating the exact same
+                        let mut temp_parts = self.players[&snake_id].parts.iter();
+                        // remove the first 3 parts from the iterator
+                        temp_parts.nth(2);
+                        for part in temp_parts {
+                            if self.foods.contains_key(part) {
+                                *self.foods.get_mut(part).unwrap() =
+                                    self.foods[part].saturating_add(1);
+                            } else {
+                                self.foods.insert(*part, 1);
+                            }
+                        }
 
-	                    // Send a message to the dead player telling them that they're dead
-	                    // message starting with \x03 means that you died
-	                    Server::send_to_stream(
-	                        &mut self.client_streams.get_mut(&snake_id).unwrap(),
-	                        &[0x03],
-	                    );
+                        // Send a message to the dead player telling them that they're dead
+                        // message starting with \x03 means that you died
+                        Server::send_to_stream(
+                            &mut self.client_streams.get_mut(&snake_id).unwrap(),
+                            &[0x03],
+                        );
 
-	                    // Remove the dead snake
-	                    self.players.remove(&snake_id);
+                        // Remove the dead snake
+                        self.players.remove(&snake_id);
 
-	                    // move onto the next snake, we're done with this one
-	                    continue 'snake;
-	                }
-	            }
+                        // move onto the next snake, we're done with this one
+                        continue 'snake;
+                    }
+                }
 
-	            // Add the new part to the head
-	            self.players
-	                .get_mut(&snake_id)
-	                .unwrap()
-	                .parts
-	                .push_back(new_head_pos);
-	            if self.snake_parts.contains_key(&new_head_pos) {
-	                self.snake_parts.get_mut(&new_head_pos).unwrap().1 = self.snake_parts
-	                    [&new_head_pos]
-	                    .1
-	                    .saturating_add(1);
-	            } else {
-	                self.snake_parts.insert(new_head_pos, (snake_id, 1));
-	            }
+                // Add the new part to the head
+                self.players
+                    .get_mut(&snake_id)
+                    .unwrap()
+                    .parts
+                    .push_back(new_head_pos);
+                if self.snake_parts.contains_key(&new_head_pos) {
+                    self.snake_parts.get_mut(&new_head_pos).unwrap().1 =
+                        self.snake_parts[&new_head_pos].1.saturating_add(1);
+                } else {
+                    self.snake_parts.insert(new_head_pos, (snake_id, 1));
+                }
 
-	            // Only remove last part if we don't need to grow
-	            println!("{}<={}", self.players[&snake_id].score, (self.players[&snake_id].parts.len() - 4));
-	            if self.players[&snake_id].score <= (self.players[&snake_id].parts.len() - 4) as u16 {
-	            	println!("removing last part");
-	                let last_part_pos = self
-	                    .players
-	                    .get_mut(&snake_id)
-	                    .unwrap()
-	                    .parts
-	                    .pop_front()
-	                    .unwrap();
+                // Only remove last part if we don't need to grow
+                println!(
+                    "{}<={}",
+                    self.players[&snake_id].score,
+                    (self.players[&snake_id].parts.len() - 4)
+                );
+                if self.players[&snake_id].score <= (self.players[&snake_id].parts.len() - 4) as u16
+                {
+                    println!("removing last part");
+                    let last_part_pos = self
+                        .players
+                        .get_mut(&snake_id)
+                        .unwrap()
+                        .parts
+                        .pop_front()
+                        .unwrap();
 
-	                self.snake_parts.get_mut(&last_part_pos).unwrap().1 -= 1;
-	                // Only remove from the hashset if there are no more parts on that position
-	                if self.snake_parts[&last_part_pos].1 == 0 {
-	                    self.snake_parts.remove(&last_part_pos).unwrap();
-	                }
-	            }
-	        }
+                    self.snake_parts.get_mut(&last_part_pos).unwrap().1 -= 1;
+                    // Only remove from the hashset if there are no more parts on that position
+                    if self.snake_parts[&last_part_pos].1 == 0 {
+                        self.snake_parts.remove(&last_part_pos).unwrap();
+                    }
+                }
+            }
         }
     }
     /// Send game data to all connected players
@@ -607,7 +613,8 @@ impl Server {
                         temp_snakes
                             .extend_from_slice(&(self.snake_parts[&field].0).to_be_bytes()[..]);
                     // id of the snake that the part belongs to -> 2 bytes
-                    } else if self.foods.contains_key(&field) {// Check if there's any food here
+                    } else if self.foods.contains_key(&field) {
+                        // Check if there's any food here
                         // there is
                         temp_foods.push((x as i8).to_be_bytes()[0]); // x pos (relative to player's head) of food -> 1 byte
                         temp_foods.push((y as i8).to_be_bytes()[0]); // y pos (relative to player's head) of food -> 1 byte
@@ -679,7 +686,7 @@ impl Server {
         };
         // generate an ID for this new player
         let mut id: u16 = 0;
-        for i in 0..=u16::max_value() as u32{
+        for i in 0..=u16::max_value() as u32 {
             if !self.players.contains_key(&(i as u16)) {
                 id = i as u16;
                 break;
