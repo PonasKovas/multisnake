@@ -418,7 +418,6 @@ impl Server {
         // Move each snake to it's facing direction
         let ids: Vec<u16> = self.players.keys().copied().collect();
         'snake: for snake_id in ids {
-            println!("moving");
             // If snake not long enough anymore, turn of fast mode
             if self.players[&snake_id].fast_mode && self.players[&snake_id].score < 1 {
                 self.players.get_mut(&snake_id).unwrap().fast_mode = false;
@@ -429,7 +428,6 @@ impl Server {
             // If snake in fast mode
             if self.players[&snake_id].fast_mode {
                 // Remove 1 score
-                println!("removing score 430");
                 self.players.get_mut(&snake_id).unwrap().score -= 1;
                 // Remove 1 part from tail
                 let tail_pos = self
@@ -540,14 +538,8 @@ impl Server {
                 }
 
                 // Only remove last part if we don't need to grow
-                println!(
-                    "{}<={}",
-                    self.players[&snake_id].score,
-                    (self.players[&snake_id].parts.len() - 4)
-                );
                 if self.players[&snake_id].score <= (self.players[&snake_id].parts.len() - 4) as u16
                 {
-                    println!("removing last part");
                     let last_part_pos = self
                         .players
                         .get_mut(&snake_id)
