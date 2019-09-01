@@ -329,6 +329,12 @@ impl Server {
                         }
                     }
 
+                    // If the snake was still growing, add some food randomly in world,
+                    // to keep the amount circulating the exact same
+                    for _ in 0..(self.players[&id].score as usize+3-self.players[&id].parts.len()) {
+                    	self.add_food();
+                    }
+
                     // Remove the player's parts from the snake_parts
                     for part in &self.players[&id].parts {
                         self.snake_parts.remove(&part);
@@ -507,6 +513,11 @@ impl Server {
                             } else {
                                 self.foods.insert(*part, 1);
                             }
+                        }
+                        // If the snake was still growing, add some food randomly in world,
+                        // to keep the amount circulating the exact same
+                        for _ in 0..(self.players[&snake_id].score as usize+3-self.players[&snake_id].parts.len()) {
+                        	self.add_food();
                         }
 
                         // Send a message to the dead player telling them that they're dead
