@@ -6,6 +6,9 @@ mod server;
 use clap::{App, Arg};
 use std::io::{stdin, BufRead};
 
+#[cfg(feature = "client")]
+use dns_lookup::lookup_host;
+
 fn main() {
     let max_players_help = format!(
         "[Server] Player limit for the server (Default {default}) ({min}-{max})",
@@ -215,7 +218,7 @@ fn main() {
                 println!("Your terminal size is only {}x{}! For better game experience I really recommend having the terminal at least 98x30", w, h);
             }
         }
-        let ip: String = match matches.value_of("ip") {
+        let mut ip: String = match matches.value_of("ip") {
             Some(ip) => ip.to_string(),
             None => {
                 println!("Please enter the IP of the server you want to connect to:");
@@ -256,6 +259,17 @@ fn main() {
         if nickname.is_empty() || nickname.len() > 10 {
             println!("Nickname too short/too long. Allowed length 1-10");
             return;
+        }
+
+        // Resolve the address of the entered hostname
+        match lookup_host(&ip).expect("could not resolve the IP").get(0) {
+        	Some(addr) => {
+        		ip = addr.to_string();
+        	},
+        	None => {
+        		println!("Could not resolve the IP of host {}", ip);
+        		return;
+        	}
         }
 
         // Start the client
