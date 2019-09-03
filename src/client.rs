@@ -357,9 +357,12 @@ pub fn draw(
     } else {
         "".to_string()
     };
+    let snakes_count_text = format!("{} snakes", snakes_info.len());
     to_print += &(SNAKE_COLORS[(my_id % 6) as usize].to_owned() + "\x1b[30m"); // colors
+    to_print += &snakes_count_text;
     to_print += &" ".repeat(
-        ((real_terminal_size.0 as usize - status_text.len()) as f64 / 2f64).floor() as usize,
+        ((real_terminal_size.0 as usize - status_text.len()) as f64 / 2f64).floor() as usize
+        	- snakes_count_text.len(),
     );
     to_print += &status_text;
     to_print += &" ".repeat(
