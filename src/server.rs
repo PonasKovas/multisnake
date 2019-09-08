@@ -7,7 +7,7 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc::{channel, Sender};
 use std::thread;
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 pub const DEFAULT_WORLD_SIZE: (u16, u16) = (200, 200);
 pub const DEFAULT_MAX_PLAYERS: u16 = 50;
@@ -49,6 +49,8 @@ pub struct Player {
     score: u16,
     /// When in fast mode, snakes move 2x faster but lose length and score
     fast_mode: bool,
+    /// Time when snake changed it's direction last time
+    last_direction_change_time: u64
 }
 
 /// A simple enum used to express the direction a snake is facing
@@ -420,10 +422,21 @@ impl Server {
     }
     /// Moves all the snakes 1 field ahead to their facing direction, eating food along the way
     /// (if there's any), or killing them if they crash into other snakes
+    /// Also checks if any snakes are AFK and kicks them
     pub fn move_snakes(self: &mut Self) {
         // Move each snake to it's facing direction
         let ids: Vec<u16> = self.players.keys().copied().collect();
         'snake: for snake_id in ids {
+            // Check when was the last direction change
+            // The timeout is 180 seconds (3 minutes)
+            if self.players[&snake_id].last_direction_change_time+180 <=
+                SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).expect("SystemTime before UNIX EPOCH!").as_secs() {
+                    println!("{} timed out. Kicking...", self.players[&snake_id].nickname);
+                    // Kill it
+                    self.kill_snake(snake_id);
+                    // Move onto the next snake
+                    continue 'snake;
+                }
             // If snake not long enough anymore, turn of fast mode
             if self.players[&snake_id].fast_mode && self.players[&snake_id].score < 1 {
                 self.players.get_mut(&snake_id).unwrap().fast_mode = false;
@@ -461,9 +474,15 @@ impl Server {
 
             // move it
             for _ in 0..moves {
-                // Change the last_direction
-                self.players.get_mut(&snake_id).unwrap().last_direction =
-                    self.players[&snake_id].direction;
+                if self.players[&snake_id].last_direction != self.players[&snake_id].direction {
+                    // save the time when this direction change happened
+                    self.players.get_mut(&snake_id).unwrap().last_direction_change_time =
+                        SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).expect("SystemTime before UNIX EPOCH!").as_secs();
+                    // Change the last_direction
+                    self.players.get_mut(&snake_id).unwrap().last_direction =
+                        self.players[&snake_id].direction;
+                }
+                
 
                 // Calculate the new head position
                 let mut new_head_pos = *self.players[&snake_id].parts.back().unwrap();
@@ -489,46 +508,13 @@ impl Server {
 					self.snake_parts[&new_head_pos].0 != snake_id
                     {
                         // CRASH!
-                        // Clean the snakes_parts
-                        for part in &self.players[&snake_id].parts {
-                            self.snake_parts.remove(&part);
-                        }
-
                         // Add a kill for the snake that killed it
                         self.players
                             .get_mut(&self.snake_parts[&new_head_pos].0)
                             .unwrap()
                             .kills += 1;
 
-                        // Add food where the dead snake was when it died
-                        // Skip the first 3 parts though, to
-                        // keep the amount of food circulating the exact same
-                        let mut temp_parts = self.players[&snake_id].parts.iter();
-                        // remove the first 3 parts from the iterator
-                        temp_parts.nth(2);
-                        for part in temp_parts {
-                            if self.foods.contains_key(part) {
-                                *self.foods.get_mut(part).unwrap() =
-                                    self.foods[part].saturating_add(1);
-                            } else {
-                                self.foods.insert(*part, 1);
-                            }
-                        }
-                        // If the snake was still growing, add some food randomly in world,
-                        // to keep the amount circulating the exact same
-                        for _ in 0..(self.players[&snake_id].score as usize+3-self.players[&snake_id].parts.len()) {
-                        	self.add_food();
-                        }
-
-                        // Send a message to the dead player telling them that they're dead
-                        // message starting with \x03 means that you died
-                        Server::send_to_stream(
-                            &mut self.client_streams.get_mut(&snake_id).unwrap(),
-                            &[0x03],
-                        );
-
-                        // Remove the dead snake
-                        self.players.remove(&snake_id);
+                        self.kill_snake(snake_id);
 
                         // move onto the next snake, we're done with this one
                         continue 'snake;
@@ -686,6 +672,7 @@ impl Server {
             kills: 0,
             score: 0,
             fast_mode: false,
+            last_direction_change_time: SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).expect("SystemTime before UNIX EPOCH!").as_secs(),
         };
         // generate an ID for this new player
         let mut id: u16 = 0;
@@ -742,5 +729,40 @@ impl Server {
             // wait for next tick
             sleep(Duration::from_millis((1000f64 / game_speed as f64) as u64));
         }
+    }
+    pub fn kill_snake(self: &mut Self, snake_id: u16) {
+        // Clean the snakes_parts
+        for part in &self.players[&snake_id].parts {
+            self.snake_parts.remove(&part);
+        }
+        // Add food where the dead snake was when it died
+        // Skip the first 3 parts though, to
+        // keep the amount of food circulating the exact same
+        let mut temp_parts = self.players[&snake_id].parts.iter();
+        // remove the first 3 parts from the iterator
+        temp_parts.nth(2);
+        for part in temp_parts {
+            if self.foods.contains_key(part) {
+                *self.foods.get_mut(part).unwrap() =
+                    self.foods[part].saturating_add(1);
+            } else {
+                self.foods.insert(*part, 1);
+            }
+        }
+        // If the snake was still growing, add some food randomly in world,
+        // to keep the amount circulating the exact same
+        for _ in 0..(self.players[&snake_id].score as usize+3-self.players[&snake_id].parts.len()) {
+            self.add_food();
+        }
+
+        // Send a message to the dead player telling them that they're dead
+        // message starting with \x03 means that you died
+        Server::send_to_stream(
+            &mut self.client_streams.get_mut(&snake_id).unwrap(),
+            &[0x03],
+        );
+
+        // Remove the dead snake
+        self.players.remove(&snake_id);
     }
 }
