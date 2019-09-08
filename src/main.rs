@@ -85,6 +85,19 @@ fn main() {
                     .conflicts_with("client"),
             );
     }
+    #[cfg(feature = "bots")]
+    {
+        matches = matches
+            .arg(
+                Arg::with_name("bots")
+                    .long("bots")
+                    .short("b")
+                    .help("[Server] adds bots to the game (Default 0)")
+                    .takes_value(true)
+                    .value_name("AMOUNT")
+                    .conflicts_with("client"),
+            );
+    }
     #[cfg(feature = "client")]
     {
         matches = matches
@@ -210,7 +223,15 @@ fn main() {
             }
         };
 
-        server::Server::start(max_players, game_speed, port, world_size, food_rate);
+        let bots: u16 = match matches.value_of("bots").unwrap_or("0").parse() {
+            Ok(amount) => amount,
+            Err(_) => {
+                println!("Couldn't parse the amount of bots");
+                return;
+            }
+        };
+
+        server::Server::start(max_players, game_speed, port, world_size, food_rate, bots);
     } else if cfg!(feature = "client") {
         // Client
         if let Some((w, h)) = term_size::dimensions() {
@@ -263,13 +284,13 @@ fn main() {
 
         // Resolve the address of the entered hostname
         match lookup_host(&ip).expect("could not resolve the IP").get(0) {
-        	Some(addr) => {
-        		ip = addr.to_string();
-        	},
-        	None => {
-        		println!("Could not resolve the IP of host {}", ip);
-        		return;
-        	}
+            Some(addr) => {
+                ip = addr.to_string();
+            }
+            None => {
+                println!("Could not resolve the IP of host {}", ip);
+                return;
+            }
         }
 
         // Start the client

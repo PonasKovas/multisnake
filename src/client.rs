@@ -362,7 +362,7 @@ pub fn draw(
     to_print += &snakes_count_text;
     to_print += &" ".repeat(
         ((real_terminal_size.0 as usize - status_text.len()) as f64 / 2f64).floor() as usize
-        	- snakes_count_text.len(),
+            - snakes_count_text.len(),
     );
     to_print += &status_text;
     to_print += &" ".repeat(

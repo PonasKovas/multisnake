@@ -1,3 +1,6 @@
+#[cfg(feature = "bots")]
+mod bot;
+
 use rand::distributions::Uniform;
 use rand::prelude::*;
 use std::collections::{HashMap, VecDeque};
@@ -50,7 +53,7 @@ pub struct Player {
     /// When in fast mode, snakes move 2x faster but lose length and score
     fast_mode: bool,
     /// Time when snake changed it's direction last time
-    last_direction_change_time: u64
+    last_direction_change_time: u64,
 }
 
 /// A simple enum used to express the direction a snake is facing
@@ -95,6 +98,7 @@ impl Server {
         port: u16,
         world_size: (u16, u16),
         food_rate: u8,
+        bot_amount: u16,
     ) {
         let mut server = Server {
             max_players,
@@ -130,7 +134,7 @@ impl Server {
             .spawn(move || {
                 Server::accept_connections(listener, add_player_sender, send_status_sender)
             })
-            .unwrap();
+            .expect(&format!("unwrap on line {}", line!()));
 
         // Spawn the thread for ticks
         let (read_player_input_sender, read_player_input_receiver) = channel();
@@ -146,7 +150,20 @@ impl Server {
                     send_game_data_sender,
                 )
             })
-            .unwrap();
+            .expect(&format!("unwrap on line {}", line!()));
+
+        // Spawn the bots
+        for i in 0..bot_amount {
+            // Generate a nickname for the bot
+            let nickname = "bot_".to_string()+&i.to_string();
+            thread::Builder::new()
+                .name(nickname.clone())
+                .spawn(move || {
+                    loop { bot::Bot::start(port, &nickname); }
+                })
+                .expect(&format!("unwrap on line {}", line!()));
+        }
+
         // The main thread will execute received instructions from channels
         loop {
             // HIGHER PRIORITY:
@@ -200,7 +217,7 @@ impl Server {
         }
         // Ok now add it to the game
         if self.foods.contains_key(&food_pos) {
-            *self.foods.get_mut(&food_pos).unwrap() = self.foods[&food_pos].saturating_add(1);
+            *self.foods.get_mut(&food_pos).expect(&format!("unwrap on line {}", line!())) = self.foods[&food_pos].saturating_add(1);
         } else {
             self.foods.insert(food_pos, 1);
         }
@@ -258,10 +275,10 @@ impl Server {
                     }
 
                     // Send instructions to generate new player object for the player to main thread
-                    add_player_sender.send((stream, nickname)).unwrap();
+                    add_player_sender.send((stream, nickname)).expect(&format!("unwrap on line {}", line!()));
                 } else if bytes[0] == 0x01 {
                     // Send instructions to main thread to send server stats to this stream
-                    send_status_sender.send(stream).unwrap();
+                    send_status_sender.send(stream).expect(&format!("unwrap on line {}", line!()));
                 } else if bytes[0] == 0x07 {
                     // It's a ping, send response
                     Server::send_to_stream(&mut stream, &[0x01, 0x07]);
@@ -299,7 +316,7 @@ impl Server {
     }
     /// Reads all data from a single player stream and parses it
     pub fn read_player_data(self: &mut Self, id: u16) {
-        let stream = &mut self.client_streams.get_mut(&id).unwrap();
+        let stream = &mut self.client_streams.get_mut(&id).expect(&format!("unwrap on line {}", line!()));
         loop {
             let bytes = match Server::read_from_stream(stream) {
                 Ok(bytes) => bytes,
@@ -325,7 +342,7 @@ impl Server {
                     temp_parts.nth(2);
                     for part in temp_parts {
                         if self.foods.contains_key(part) {
-                            *self.foods.get_mut(part).unwrap() = self.foods[part].saturating_add(1);
+                            *self.foods.get_mut(part).expect(&format!("unwrap on line {}", line!())) = self.foods[part].saturating_add(1);
                         } else {
                             self.foods.insert(*part, 1);
                         }
@@ -333,8 +350,10 @@ impl Server {
 
                     // If the snake was still growing, add some food randomly in world,
                     // to keep the amount circulating the exact same
-                    for _ in 0..(self.players[&id].score as usize+3-self.players[&id].parts.len()) {
-                    	self.add_food();
+                    for _ in
+                        0..(self.players[&id].score as usize + 3 - self.players[&id].parts.len())
+                    {
+                        self.add_food();
                     }
 
                     // Remove the player's parts from the snake_parts
@@ -359,7 +378,7 @@ impl Server {
                 }
 
                 // Ok, save the new direction
-                self.players.get_mut(&id).unwrap().direction = new_direction;
+                self.players.get_mut(&id).expect(&format!("unwrap on line {}", line!())).direction = new_direction;
             }
 
             // Messages starting with \x08 are requests to toggle fast mode
@@ -370,7 +389,7 @@ impl Server {
                 }
 
                 // Ok, toggle it
-                self.players.get_mut(&id).unwrap().fast_mode = !self.players[&id].fast_mode;
+                self.players.get_mut(&id).expect(&format!("unwrap on line {}", line!())).fast_mode = !self.players[&id].fast_mode;
             }
         }
     }
@@ -429,17 +448,21 @@ impl Server {
         'snake: for snake_id in ids {
             // Check when was the last direction change
             // The timeout is 180 seconds (3 minutes)
-            if self.players[&snake_id].last_direction_change_time+180 <=
-                SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).expect("SystemTime before UNIX EPOCH!").as_secs() {
-                    println!("{} timed out. Kicking...", self.players[&snake_id].nickname);
-                    // Kill it
-                    self.kill_snake(snake_id);
-                    // Move onto the next snake
-                    continue 'snake;
-                }
+            if self.players[&snake_id].last_direction_change_time + 180
+                <= SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .expect("SystemTime before UNIX EPOCH!")
+                    .as_secs()
+            {
+                println!("{} timed out. Kicking...", self.players[&snake_id].nickname);
+                // Kill it
+                self.kill_snake(snake_id);
+                // Move onto the next snake
+                continue 'snake;
+            }
             // If snake not long enough anymore, turn of fast mode
             if self.players[&snake_id].fast_mode && self.players[&snake_id].score < 1 {
-                self.players.get_mut(&snake_id).unwrap().fast_mode = false;
+                self.players.get_mut(&snake_id).expect(&format!("unwrap on line {}", line!())).fast_mode = false;
             }
 
             let mut moves = 1;
@@ -447,23 +470,23 @@ impl Server {
             // If snake in fast mode
             if self.players[&snake_id].fast_mode {
                 // Remove 1 score
-                self.players.get_mut(&snake_id).unwrap().score -= 1;
+                self.players.get_mut(&snake_id).expect(&format!("unwrap on line {}", line!())).score -= 1;
                 // Remove 1 part from tail
                 let tail_pos = self
                     .players
                     .get_mut(&snake_id)
-                    .unwrap()
+                    .expect(&format!("unwrap on line {}", line!()))
                     .parts
                     .pop_front()
-                    .unwrap();
-                self.snake_parts.get_mut(&tail_pos).unwrap().1 -= 1;
+                    .expect(&format!("unwrap on line {}", line!()));
+                self.snake_parts.get_mut(&tail_pos).expect(&format!("unwrap on line {}", line!())).1 -= 1;
                 // Only remove from the hashset if there are no more parts on that position
                 if self.snake_parts[&tail_pos].1 == 0 {
-                    self.snake_parts.remove(&tail_pos).unwrap();
+                    self.snake_parts.remove(&tail_pos).expect(&format!("unwrap on line {}", line!()));
                 }
                 // add food where the part was
                 if self.foods.contains_key(&tail_pos) {
-                    *self.foods.get_mut(&tail_pos).unwrap() =
+                    *self.foods.get_mut(&tail_pos).expect(&format!("unwrap on line {}", line!())) =
                         self.foods[&tail_pos].saturating_add(1);
                 } else {
                     self.foods.insert(tail_pos, 1);
@@ -476,16 +499,20 @@ impl Server {
             for _ in 0..moves {
                 if self.players[&snake_id].last_direction != self.players[&snake_id].direction {
                     // save the time when this direction change happened
-                    self.players.get_mut(&snake_id).unwrap().last_direction_change_time =
-                        SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).expect("SystemTime before UNIX EPOCH!").as_secs();
+                    self.players
+                        .get_mut(&snake_id)
+                        .expect(&format!("unwrap on line {}", line!()))
+                        .last_direction_change_time = SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .expect("SystemTime before UNIX EPOCH!")
+                        .as_secs();
                     // Change the last_direction
-                    self.players.get_mut(&snake_id).unwrap().last_direction =
+                    self.players.get_mut(&snake_id).expect(&format!("unwrap on line {}", line!())).last_direction =
                         self.players[&snake_id].direction;
                 }
-                
 
                 // Calculate the new head position
-                let mut new_head_pos = *self.players[&snake_id].parts.back().unwrap();
+                let mut new_head_pos = *self.players[&snake_id].parts.back().expect(&format!("unwrap on line {}", line!()));
 
                 let (dx, dy) = self.players[&snake_id].direction.to_vector();
 
@@ -496,7 +523,7 @@ impl Server {
 
                 // If the head is on food, eat it
                 if self.foods.contains_key(&new_head_pos) {
-                    self.players.get_mut(&snake_id).unwrap().score +=
+                    self.players.get_mut(&snake_id).expect(&format!("unwrap on line {}", line!())).score +=
                         self.foods[&new_head_pos] as u16;
                     self.foods.remove(&new_head_pos);
                 } else {
@@ -511,7 +538,7 @@ impl Server {
                         // Add a kill for the snake that killed it
                         self.players
                             .get_mut(&self.snake_parts[&new_head_pos].0)
-                            .unwrap()
+                            .expect(&format!("unwrap on line {}", line!()))
                             .kills += 1;
 
                         self.kill_snake(snake_id);
@@ -524,11 +551,11 @@ impl Server {
                 // Add the new part to the head
                 self.players
                     .get_mut(&snake_id)
-                    .unwrap()
+                    .expect(&format!("unwrap on line {}", line!()))
                     .parts
                     .push_back(new_head_pos);
                 if self.snake_parts.contains_key(&new_head_pos) {
-                    self.snake_parts.get_mut(&new_head_pos).unwrap().1 =
+                    self.snake_parts.get_mut(&new_head_pos).expect(&format!("unwrap on line {}", line!())).1 =
                         self.snake_parts[&new_head_pos].1.saturating_add(1);
                 } else {
                     self.snake_parts.insert(new_head_pos, (snake_id, 1));
@@ -540,15 +567,15 @@ impl Server {
                     let last_part_pos = self
                         .players
                         .get_mut(&snake_id)
-                        .unwrap()
+                        .expect(&format!("unwrap on line {}", line!()))
                         .parts
                         .pop_front()
-                        .unwrap();
+                        .expect(&format!("unwrap on line {}", line!()));
 
-                    self.snake_parts.get_mut(&last_part_pos).unwrap().1 -= 1;
+                    self.snake_parts.get_mut(&last_part_pos).expect(&format!("unwrap on line {}", line!())).1 -= 1;
                     // Only remove from the hashset if there are no more parts on that position
                     if self.snake_parts[&last_part_pos].1 == 0 {
-                        self.snake_parts.remove(&last_part_pos).unwrap();
+                        self.snake_parts.remove(&last_part_pos).expect(&format!("unwrap on line {}", line!()));
                     }
                 }
             }
@@ -581,7 +608,7 @@ impl Server {
         for id in self.players.keys() {
             let mut individual_bytes = bytes.clone();
 
-            let player_head_pos = *self.players[&id].parts.back().unwrap();
+            let player_head_pos = *self.players[&id].parts.back().expect(&format!("unwrap on line {}", line!()));
             let world_size = (self.world_size.0 as i32, self.world_size.1 as i32);
 
             let mut temp_snakes: Vec<u8> = Vec::new();
@@ -624,7 +651,7 @@ impl Server {
 
             // Send it
             Server::send_to_stream(
-                &mut self.client_streams.get_mut(&id).unwrap(),
+                &mut self.client_streams.get_mut(&id).expect(&format!("unwrap on line {}", line!())),
                 &individual_bytes[..],
             );
         }
@@ -672,7 +699,10 @@ impl Server {
             kills: 0,
             score: 0,
             fast_mode: false,
-            last_direction_change_time: SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).expect("SystemTime before UNIX EPOCH!").as_secs(),
+            last_direction_change_time: SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .expect("SystemTime before UNIX EPOCH!")
+                .as_secs(),
         };
         // generate an ID for this new player
         let mut id: u16 = 0;
@@ -723,9 +753,9 @@ impl Server {
         send_game_data_sender: Sender<()>,
     ) {
         loop {
-            read_player_input_sender.send(()).unwrap();
-            move_snakes_sender.send(()).unwrap();
-            send_game_data_sender.send(()).unwrap();
+            read_player_input_sender.send(()).expect(&format!("unwrap on line {}", line!()));
+            move_snakes_sender.send(()).expect(&format!("unwrap on line {}", line!()));
+            send_game_data_sender.send(()).expect(&format!("unwrap on line {}", line!()));
             // wait for next tick
             sleep(Duration::from_millis((1000f64 / game_speed as f64) as u64));
         }
@@ -743,22 +773,23 @@ impl Server {
         temp_parts.nth(2);
         for part in temp_parts {
             if self.foods.contains_key(part) {
-                *self.foods.get_mut(part).unwrap() =
-                    self.foods[part].saturating_add(1);
+                *self.foods.get_mut(part).expect(&format!("unwrap on line {}", line!())) = self.foods[part].saturating_add(1);
             } else {
                 self.foods.insert(*part, 1);
             }
         }
         // If the snake was still growing, add some food randomly in world,
         // to keep the amount circulating the exact same
-        for _ in 0..(self.players[&snake_id].score as usize+3-self.players[&snake_id].parts.len()) {
+        for _ in
+            0..(self.players[&snake_id].score as usize + 3 - self.players[&snake_id].parts.len())
+        {
             self.add_food();
         }
 
         // Send a message to the dead player telling them that they're dead
         // message starting with \x03 means that you died
         Server::send_to_stream(
-            &mut self.client_streams.get_mut(&snake_id).unwrap(),
+            &mut self.client_streams.get_mut(&snake_id).expect(&format!("unwrap on line {}", line!())),
             &[0x03],
         );
 
