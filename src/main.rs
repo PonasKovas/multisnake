@@ -87,16 +87,15 @@ fn main() {
     }
     #[cfg(feature = "bots")]
     {
-        matches = matches
-            .arg(
-                Arg::with_name("bots")
-                    .long("bots")
-                    .short("b")
-                    .help("[Server] adds bots to the game (Default 0)")
-                    .takes_value(true)
-                    .value_name("AMOUNT")
-                    .conflicts_with("client"),
-            );
+        matches = matches.arg(
+            Arg::with_name("bots")
+                .long("bots")
+                .short("b")
+                .help("[Server] adds bots to the game (Default 0)")
+                .takes_value(true)
+                .value_name("AMOUNT")
+                .conflicts_with("client"),
+        );
     }
     #[cfg(feature = "client")]
     {

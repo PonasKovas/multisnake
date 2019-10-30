@@ -26,7 +26,7 @@ const FOOD_COLORS: [&str; 6] = [
 pub fn start(ip: String, port: u16, nickname: String) {
     // make sure to put the terminal back into cooked mode before exiting
     let _guard = scopeguard::guard((), |_| {
-        print!("\x1b[?25h\r\n");
+        println!("\x1b[?25h");
         RawScreen::disable_raw_mode().expect("Failed to put terminal into cooked mode.");
     });
 
@@ -152,7 +152,7 @@ pub fn handle_input(mut stream: TcpStream, input: SyncReader) {
             InputEvent::Keyboard(KeyEvent::Ctrl('c'))
             | InputEvent::Keyboard(KeyEvent::Char('q')) => {
                 // Put the terminal into cooked mode and terminate process
-                print!("\x1b[?25h\r\n");
+                println!("\x1b[?25h");
                 RawScreen::disable_raw_mode().expect("Failed to put terminal into cooked mode.");
                 std::process::exit(0);
             }

@@ -5,12 +5,12 @@ use rand::prelude::*;
 use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::io::prelude::*;
-use std::net::{TcpListener, TcpStream, SocketAddr};
+use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::process::exit;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::thread::sleep;
-use std::time::{Duration, SystemTime, Instant};
-use std::process::exit;
+use std::time::{Duration, Instant, SystemTime};
 
 pub const DEFAULT_WORLD_SIZE: (u16, u16) = (200, 200);
 pub const DEFAULT_MAX_PLAYERS: u16 = 50;
@@ -45,7 +45,7 @@ pub enum Field {
     /// There's food on this field. Contains a number - how much food
     Food(u8),
     /// There's a snake part on this field. Contains the ID of the owner snake
-    Snake(u16)
+    Snake(u16),
 }
 
 /// Contains data about a specific player
@@ -113,7 +113,10 @@ impl Server {
         food_rate: u8,
         bot_amount: u16,
     ) {
-        println!("Reserving memory for world... ({} bytes)", std::mem::size_of::<Field>() as u32 * world_size.0 as u32 * world_size.1 as u32);
+        println!(
+            "Reserving memory for world... ({} bytes)",
+            std::mem::size_of::<Field>() as u32 * world_size.0 as u32 * world_size.1 as u32
+        );
         let now = Instant::now();
 
         let server = Server {
@@ -121,7 +124,11 @@ impl Server {
             players: Arc::new(Mutex::new(HashMap::new())),
             client_streams: Arc::new(Mutex::new(HashMap::new())),
             world_size,
-            world: Arc::new(Mutex::new( vec![Field::Empty; world_size.0 as usize*world_size.1 as usize] )),
+            world: Arc::new(Mutex::new(vec![
+                Field::Empty;
+                world_size.0 as usize
+                    * world_size.1 as usize
+            ])),
             game_speed,
             food_rate,
             port,
@@ -148,9 +155,7 @@ impl Server {
         let server_clone = server.clone();
         thread::Builder::new()
             .name("connections_acceptor".to_string())
-            .spawn(move || {
-                server_clone.accept_connections()
-            })
+            .spawn(move || server_clone.accept_connections())
             .unwrap();
 
         // Wait for the connection acceptor to bind to the port
@@ -165,8 +170,8 @@ impl Server {
             let nickname = format!("bot_{}", i);
             thread::Builder::new()
                 .name(nickname.clone())
-                .spawn(move || {
-                    loop { bot::Bot::start(port, &nickname); }
+                .spawn(move || loop {
+                    bot::Bot::start(port, &nickname);
                 })
                 .unwrap();
         }
@@ -187,7 +192,8 @@ impl Server {
             server.send_data_to_players();
 
             // Wait for next tick, if need to
-            let wait_for = Duration::from_micros((1000000f64 / server.game_speed as f64) as u64).checked_sub(tick_start.elapsed());
+            let wait_for = Duration::from_micros((1_000_000f64 / server.game_speed as f64) as u64)
+                .checked_sub(tick_start.elapsed());
             if let Some(x) = wait_for {
                 sleep(x);
             }
@@ -195,8 +201,11 @@ impl Server {
     }
     /// Adds a single food object to a random place
     pub fn add_food(&self, rng: &mut ThreadRng, world_lock: &mut MutexGuard<Vec<Field>>) {
-        let mut pos = (rng.gen::<u16>() % self.world_size.0, rng.gen::<u16>() % self.world_size.1);
-        
+        let mut pos = (
+            rng.gen::<u16>() % self.world_size.0,
+            rng.gen::<u16>() % self.world_size.1,
+        );
+
         loop {
             // Check if there's any snake on the generated position
             let field = world_lock[self.coordinates_to_index(pos)];
@@ -213,7 +222,7 @@ impl Server {
 
             // Choose a new neighbor position and try again
             pos.0 += 1;
-            if pos.0/self.world_size.0 == 1 {
+            if pos.0 / self.world_size.0 == 1 {
                 pos.0 = 0;
                 pos.1 = (pos.1 + 1) % self.world_size.1;
             }
@@ -222,7 +231,7 @@ impl Server {
         // Add the food to the generated position
         // If there's already food, just increment the count
         if let Field::Food(amount) = world_lock[self.coordinates_to_index(pos)] {
-            world_lock[self.coordinates_to_index(pos)] = Field::Food(amount+1);
+            world_lock[self.coordinates_to_index(pos)] = Field::Food(amount + 1);
         } else {
             world_lock[self.coordinates_to_index(pos)] = Field::Food(1);
         }
@@ -247,14 +256,17 @@ impl Server {
             // Accept a new connection
             if let Ok((stream, addr)) = listener.accept() {
                 // Set timeout to 60 seconds
-                stream.set_read_timeout(Some(Duration::from_secs(60))).expect("set_read_timeout call failed");
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(60)))
+                    .expect("set_read_timeout call failed");
                 // Spawn a new thread for handling this new connection
                 let server_clone = self.clone();
                 thread::Builder::new()
                     .name("new_connection_handler".to_string())
                     .spawn(move || {
                         server_clone.handle_new_connection(stream, addr);
-                    }).unwrap();
+                    })
+                    .unwrap();
             }
         }
     }
@@ -320,14 +332,17 @@ impl Server {
             stream
                 .set_nonblocking(true)
                 .expect("set_nonblocking failed");
-            
+
             // Add a new player instance to the game
-            if let Err(_) = self.add_player(&mut players, &nickname, id) {
+            if self.add_player(&mut players, &nickname, id).is_err() {
                 println!("Failed to spawn a player because there's not enough space on world");
                 send_to_stream(&mut stream, b"\x05not enough space in world. try again");
                 return;
             }
-            self.client_streams.lock().unwrap().insert(id, stream.try_clone().expect("try_clone failed!"));
+            self.client_streams
+                .lock()
+                .unwrap()
+                .insert(id, stream.try_clone().expect("try_clone failed!"));
             // drop the players lock
             drop(players);
 
@@ -348,7 +363,12 @@ impl Server {
         }
     }
     /// Adds a player to the world
-    pub fn add_player(&self, players_lock: &mut MutexGuard<HashMap<u16, Player>>, nickname: &str, id: u16) -> Result<(),()> {
+    pub fn add_player(
+        &self,
+        players_lock: &mut MutexGuard<HashMap<u16, Player>>,
+        nickname: &str,
+        id: u16,
+    ) -> Result<(), ()> {
         // Generate a Player object for our new player :)
         // Generate random direction
         let direction = Direction::from_byte(thread_rng().gen_range(0, 4) as u8);
@@ -368,7 +388,7 @@ impl Server {
                 .expect("SystemTime before UNIX EPOCH! What the heck did you do bro")
                 .as_secs(),
         };
-        
+
         // Add the player object to the hashmap
         players_lock.insert(id, player);
         Ok(())
@@ -376,26 +396,34 @@ impl Server {
     /// Generate a random position for a new snake to spawn to, without overlapping
     /// with other snakes or foods
     /// Returns `None` if no position to spawn the snake on was found
-    pub fn generate_snake_parts(&self, direction: Direction, id: u16) -> Result<VecDeque<(u16, u16)>, ()> {
+    pub fn generate_snake_parts(
+        &self,
+        direction: Direction,
+        id: u16,
+    ) -> Result<VecDeque<(u16, u16)>, ()> {
         let mut parts = VecDeque::with_capacity(3);
         let direction_vector = direction.to_vector();
         let mut head_pos: (u16, u16) = (
-                thread_rng().gen_range(0, self.world_size.0) as u16,
-                thread_rng().gen_range(0, self.world_size.1) as u16,
-            );
-        for _ in 0..(self.world_size.0 as u32*self.world_size.1 as u32) {
+            thread_rng().gen_range(0, self.world_size.0) as u16,
+            thread_rng().gen_range(0, self.world_size.1) as u16,
+        );
+        for _ in 0..(self.world_size.0 as u32 * self.world_size.1 as u32) {
             head_pos.0 += 1;
             if head_pos.0 == self.world_size.0 {
                 head_pos.0 = 0;
                 head_pos.1 = (head_pos.1 + 1) % self.world_size.1;
             }
             let part2_pos = (
-                (((head_pos.0 as i32) - direction_vector.0 + self.world_size.0 as i32) as u32 % self.world_size.0 as u32) as u16,
-                (((head_pos.1 as i32) - direction_vector.1 + self.world_size.1 as i32) as u32 % self.world_size.1 as u32) as u16,
+                (((head_pos.0 as i32) - direction_vector.0 + self.world_size.0 as i32) as u32
+                    % self.world_size.0 as u32) as u16,
+                (((head_pos.1 as i32) - direction_vector.1 + self.world_size.1 as i32) as u32
+                    % self.world_size.1 as u32) as u16,
             );
             let part3_pos = (
-                (((head_pos.0 as i32) - 2 * direction_vector.0 + self.world_size.0 as i32) as u32 % self.world_size.0 as u32) as u16,
-                (((head_pos.1 as i32) - 2 * direction_vector.1 + self.world_size.1 as i32) as u32 % self.world_size.1 as u32) as u16,
+                (((head_pos.0 as i32) - 2 * direction_vector.0 + self.world_size.0 as i32) as u32
+                    % self.world_size.0 as u32) as u16,
+                (((head_pos.1 as i32) - 2 * direction_vector.1 + self.world_size.1 as i32) as u32
+                    % self.world_size.1 as u32) as u16,
             );
             // If there's another snake part or food already there, generate another position
             let mut world = self.world.lock().unwrap();
@@ -403,10 +431,12 @@ impl Server {
             if let Field::Snake(..) | Field::Food(..) = world[self.coordinates_to_index(head_pos)] {
                 continue;
             }
-            if let Field::Snake(..) | Field::Food(..) = world[self.coordinates_to_index(part2_pos)] {
+            if let Field::Snake(..) | Field::Food(..) = world[self.coordinates_to_index(part2_pos)]
+            {
                 continue;
             }
-            if let Field::Snake(..) | Field::Food(..) = world[self.coordinates_to_index(part3_pos)] {
+            if let Field::Snake(..) | Field::Food(..) = world[self.coordinates_to_index(part3_pos)]
+            {
                 continue;
             }
 
@@ -430,7 +460,7 @@ impl Server {
         // max players -> 2 bytes
         bytes.extend_from_slice(&self.max_players.to_be_bytes()[..]);
         // players playing now -> 2 bytes
-        let playing_now = self.players.lock().expect(&format!("line: {}", line!())).len() as u16;
+        let playing_now = self.players.lock().unwrap().len() as u16;
         bytes.extend_from_slice(&playing_now.to_be_bytes()[..]);
         // world size -> 4 bytes
         bytes.extend_from_slice(&self.world_size.0.to_be_bytes()[..]);
@@ -475,7 +505,7 @@ impl Server {
                         break;
                     }
                 };
-                
+
                 // Messages starting with \x02 contain a new direction that a snake faces
                 if bytes.len() == 2 && bytes[0] == 0x02 {
                     let new_direction = Direction::from_byte(bytes[1]);
@@ -503,24 +533,29 @@ impl Server {
     }
     /// Removes the Snake structure from players hashmap, and removes snake's parts from world, adds food instead
     /// This method doesn't remove the stream from Server::client_streams though
-    pub fn remove_snake(&self, id: u16, players_lock: &mut MutexGuard<HashMap<u16, Player>>, mut world_lock: &mut MutexGuard<Vec<Field>>) {
+    pub fn remove_snake(
+        &self,
+        id: u16,
+        players_lock: &mut MutexGuard<HashMap<u16, Player>>,
+        mut world_lock: &mut MutexGuard<Vec<Field>>,
+    ) {
         // Generate food where the snake was
         let mut rng = thread_rng();
         for i in 0..players_lock[&id].score {
             match players_lock[&id].parts.get(i as usize) {
                 Some(coordinates) => {
                     world_lock[self.coordinates_to_index(*coordinates)] = Field::Food(1);
-                },
+                }
                 None => {
                     self.add_food(&mut rng, &mut world_lock);
-                },
+                }
             }
         }
 
         // Remove all left-over snake parts from world
         if (players_lock[&id].score as usize) < players_lock[&id].parts.len() {
-            for i in 0..(players_lock[&id].parts.len()-players_lock[&id].score as usize) {
-                let field = players_lock[&id].parts[i+players_lock[&id].score as usize];
+            for i in 0..(players_lock[&id].parts.len() - players_lock[&id].score as usize) {
+                let field = players_lock[&id].parts[i + players_lock[&id].score as usize];
                 world_lock[self.coordinates_to_index(field)] = Field::Empty;
             }
         }
@@ -541,13 +576,20 @@ impl Server {
             // The timeout is 60 seconds
             if players[&snake_id].last_direction_change_time + 60
                 <= SystemTime::now()
-                    .duration_since(SystemTime::UNIX_EPOCH).expect("bruh").as_secs()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .expect("bruh")
+                    .as_secs()
             {
                 println!("{} timed out. Kicking...", players[&snake_id].nickname);
                 // Send a message to them telling them that they're dead
                 // message starting with \x03 means that you died
                 send_to_stream(
-                    &mut self.client_streams.lock().unwrap().get_mut(&snake_id).unwrap(),
+                    &mut self
+                        .client_streams
+                        .lock()
+                        .unwrap()
+                        .get_mut(&snake_id)
+                        .unwrap(),
                     &[0x03],
                 );
 
@@ -565,22 +607,23 @@ impl Server {
                 snake.fast_mode = false;
             }
 
-            let mut moves = 1;
-
             // If snake in fast mode make it move twice
-            if players[&snake_id].fast_mode {
-                moves = 2;
-            }
+            let moves = if players[&snake_id].fast_mode { 2 } else { 1 };
 
             // move it
             for _ in 0..moves {
                 if players[&snake_id].direction != players[&snake_id].last_direction {
                     // save the time when this direction change happened
-                    players.get_mut(&snake_id).unwrap().last_direction_change_time = SystemTime::now()
-                        .duration_since(SystemTime::UNIX_EPOCH).expect("SystemTime before UNIX EPOCH!")
+                    players
+                        .get_mut(&snake_id)
+                        .unwrap()
+                        .last_direction_change_time = SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .expect("SystemTime before UNIX EPOCH!")
                         .as_secs();
                     // Change the last_direction
-                    players.get_mut(&snake_id).unwrap().last_direction = players[&snake_id].direction;
+                    players.get_mut(&snake_id).unwrap().last_direction =
+                        players[&snake_id].direction;
                 }
 
                 // Calculate the new head position
@@ -605,7 +648,12 @@ impl Server {
                     // Send a message to them telling them that they're dead
                     // message starting with \x03 means that you died
                     send_to_stream(
-                        &mut self.client_streams.lock().unwrap().get_mut(&snake_id).unwrap(),
+                        &mut self
+                            .client_streams
+                            .lock()
+                            .unwrap()
+                            .get_mut(&snake_id)
+                            .unwrap(),
                         &[0x03],
                     );
 
@@ -618,7 +666,11 @@ impl Server {
                 }
 
                 // Add the new part to the head
-                players.get_mut(&snake_id).unwrap().parts.push_back(new_head_pos);
+                players
+                    .get_mut(&snake_id)
+                    .unwrap()
+                    .parts
+                    .push_back(new_head_pos);
                 world[self.coordinates_to_index(new_head_pos)] = Field::Snake(snake_id);
             }
 
@@ -629,8 +681,17 @@ impl Server {
 
             let mut tail_pos = None;
             // If needed, remove parts from tail
-            for _ in 0..((players[&snake_id].parts.len() - 3) as u16).saturating_sub(players[&snake_id].score) {
-                tail_pos = Some(players.get_mut(&snake_id).unwrap().parts.pop_front().unwrap());
+            for _ in 0..((players[&snake_id].parts.len() - 3) as u16)
+                .saturating_sub(players[&snake_id].score)
+            {
+                tail_pos = Some(
+                    players
+                        .get_mut(&snake_id)
+                        .unwrap()
+                        .parts
+                        .pop_front()
+                        .unwrap(),
+                );
                 world[self.coordinates_to_index(tail_pos.unwrap())] = Field::Empty;
             }
 
@@ -639,10 +700,10 @@ impl Server {
                 match tail_pos {
                     Some(pos) => {
                         world[self.coordinates_to_index(pos)] = Field::Food(1);
-                    },
+                    }
                     None => {
                         self.add_food(&mut thread_rng(), &mut world);
-                    },
+                    }
                 }
             }
         }
@@ -688,25 +749,24 @@ impl Server {
             for y in -14i32..15i32 {
                 for x in -24i32..25i32 {
                     let field: (u16, u16) = (
-                        ((player_head_pos.0 as i32 + x + world_size.0*2) % world_size.0) as u16,
-                        ((player_head_pos.1 as i32 + y + world_size.1*2) % world_size.1) as u16,
+                        ((player_head_pos.0 as i32 + x + world_size.0 * 2) % world_size.0) as u16,
+                        ((player_head_pos.1 as i32 + y + world_size.1 * 2) % world_size.1) as u16,
                     );
                     // Check if there's any snake here
                     if let Field::Snake(snake_id) = world[self.coordinates_to_index(field)] {
                         // there is
                         temp_snakes.push((x as i8).to_be_bytes()[0]); // x pos (relative to player's head) of snake part -> 1 byte
                         temp_snakes.push((y as i8).to_be_bytes()[0]); // y pos (relative to player's head) of snake part -> 1 byte
-                        // id of the snake that the part belongs to -> 2 bytes
-                        temp_snakes
-                            .extend_from_slice(&snake_id.to_be_bytes()[..]);
-                    
+                                                                      // id of the snake that the part belongs to -> 2 bytes
+                        temp_snakes.extend_from_slice(&snake_id.to_be_bytes()[..]);
+
                     // Check if there's any food here
                     } else if let Field::Food(amount) = world[self.coordinates_to_index(field)] {
                         // there is
                         temp_foods.push((x as i8).to_be_bytes()[0]); // x pos (relative to player's head) of food -> 1 byte
                         temp_foods.push((y as i8).to_be_bytes()[0]); // y pos (relative to player's head) of food -> 1 byte
-                        // amount of food here -> 1 byte
-                        temp_foods.push(amount.to_be_bytes()[0]); 
+                                                                     // amount of food here -> 1 byte
+                        temp_foods.push(amount.to_be_bytes()[0]);
                     }
                 }
             }
@@ -722,8 +782,7 @@ impl Server {
 
             // Send it
             send_to_stream(
-                &mut self.client_streams.lock().unwrap()
-                    .get_mut(&id).unwrap(),
+                &mut self.client_streams.lock().unwrap().get_mut(&id).unwrap(),
                 &individual_bytes[..],
             );
         }
@@ -744,7 +803,6 @@ impl Clone for Server {
         }
     }
 }
-
 
 /// Reads 1 message from stream
 /// Returns `Ok(bytes)` if the reading was successful
