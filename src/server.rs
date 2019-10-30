@@ -10,7 +10,7 @@ use std::process::exit;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::thread::sleep;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 pub const DEFAULT_WORLD_SIZE: (u16, u16) = (200, 200);
 pub const DEFAULT_MAX_PLAYERS: u16 = 50;
@@ -65,8 +65,6 @@ pub struct Player {
     score: u16,
     /// When in fast mode, snakes move 2x faster but lose length and score
     fast_mode: bool,
-    /// Time when snake changed it's direction last time
-    last_direction_change_time: u64,
 }
 
 /// A simple enum used to express the direction a snake is facing
@@ -383,10 +381,6 @@ impl Server {
             kills: 0,
             score: 0,
             fast_mode: false,
-            last_direction_change_time: SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .expect("SystemTime before UNIX EPOCH! What the heck did you do bro")
-                .as_secs(),
         };
 
         // Add the player object to the hashmap
@@ -572,35 +566,6 @@ impl Server {
         let mut world = self.world.lock().unwrap();
         let ids: Vec<u16> = players.keys().copied().collect();
         'snake: for snake_id in ids {
-            // Check when was the last direction change
-            // The timeout is 60 seconds
-            if players[&snake_id].last_direction_change_time + 60
-                <= SystemTime::now()
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .expect("bruh")
-                    .as_secs()
-            {
-                println!("{} timed out. Kicking...", players[&snake_id].nickname);
-                // Send a message to them telling them that they're dead
-                // message starting with \x03 means that you died
-                send_to_stream(
-                    &mut self
-                        .client_streams
-                        .lock()
-                        .unwrap()
-                        .get_mut(&snake_id)
-                        .unwrap(),
-                    &[0x03],
-                );
-
-                // Kill it
-                self.remove_snake(snake_id, &mut players, &mut world);
-                self.client_streams.lock().unwrap().remove(&snake_id);
-
-                // Move onto the next snake
-                continue 'snake;
-            }
-
             // If snake not long enough anymore, turn off fast mode
             let snake = players.get_mut(&snake_id).unwrap();
             if snake.fast_mode && snake.score < 1 {
@@ -613,14 +578,6 @@ impl Server {
             // move it
             for _ in 0..moves {
                 if players[&snake_id].direction != players[&snake_id].last_direction {
-                    // save the time when this direction change happened
-                    players
-                        .get_mut(&snake_id)
-                        .unwrap()
-                        .last_direction_change_time = SystemTime::now()
-                        .duration_since(SystemTime::UNIX_EPOCH)
-                        .expect("SystemTime before UNIX EPOCH!")
-                        .as_secs();
                     // Change the last_direction
                     players.get_mut(&snake_id).unwrap().last_direction =
                         players[&snake_id].direction;
