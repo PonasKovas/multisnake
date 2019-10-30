@@ -327,10 +327,18 @@ pub fn draw(
                 // Get the color
                 to_print += SNAKE_COLORS[(snake_parts[&(x, y)] % 6) as usize]; // color
                                                                                // if snake in fast mode, draw it using ++
-                if snakes_info[&snake_parts[&(x, y)]].3 {
-                    to_print += "\x1b[30m++"; // body
+                if my_id == snake_parts[&(x, y)] {
+                    if snakes_info[&snake_parts[&(x, y)]].3 {
+                        to_print += "\x1b[30m\x1b[90m##"; // body
+                    } else {
+                        to_print += "\x1b[90m&&"; // body
+                    }
                 } else {
-                    to_print += "  "; // body
+                    if snakes_info[&snake_parts[&(x, y)]].3 {
+                        to_print += "\x1b[30m++"; // body
+                    } else {
+                        to_print += "  "; // body
+                    }
                 }
                 to_print += "\x1b[0m"; // reset colors
             } else {
