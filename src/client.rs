@@ -306,32 +306,15 @@ pub fn draw(
     // Iterate through all fields in the constructed ranges and check if there's anything there
     for y in height {
         for x in width.clone() {
-            if foods.contains_key(&(x, y)) {
-                // Figure out the color based on how much food there is
-                let amount = foods[&(x, y)];
-                if amount >= 32 {
-                    to_print += FOOD_COLORS[5];
-                } else if amount >= 16 {
-                    to_print += FOOD_COLORS[4];
-                } else if amount >= 8 {
-                    to_print += FOOD_COLORS[3];
-                } else if amount >= 4 {
-                    to_print += FOOD_COLORS[2];
-                } else if amount >= 2 {
-                    to_print += FOOD_COLORS[1];
-                } else if amount >= 1 {
-                    to_print += FOOD_COLORS[0];
-                }
-                to_print += "\x1b[1m\x1b[30m[]\x1b[0m"; // a food square
-            } else if snake_parts.contains_key(&(x, y)) {
+            if snake_parts.contains_key(&(x, y)) {
                 // Get the color
                 to_print += SNAKE_COLORS[(snake_parts[&(x, y)] % 6) as usize]; // color
                                                                                // if snake in fast mode, draw it using ++
                 if my_id == snake_parts[&(x, y)] {
                     if snakes_info[&snake_parts[&(x, y)]].3 {
-                        to_print += "\x1b[30m\x1b[90m##"; // body
+                        to_print += "\x1b[30m\x1b[90m⌠⌡"; // body
                     } else {
-                        to_print += "\x1b[90m&&"; // body
+                        to_print += "\x1b[90m[]"; // body
                     }
                 } else {
                     if snakes_info[&snake_parts[&(x, y)]].3 {
@@ -342,11 +325,30 @@ pub fn draw(
                 }
                 to_print += "\x1b[0m"; // reset colors
             } else {
-                to_print += "  "; // a background colored square
+                // Check for food
+                for i in 0..2 {
+                    let fields = (
+                        foods.get(&(
+                            2*x + if i == 1 {1} else {0},
+                            2*y
+                        )),
+                        foods.get(&(
+                            2*x + if i == 1 {1} else {0},
+                            2*y + 1
+                        ))
+                    );
+                    match fields {
+                        (None, None) => { to_print += " "; },
+                        (Some(amount), None) => { to_print += "▀"; },
+                        (None, Some(amount)) => { to_print += "▄"; },
+                        (Some(amount0), Some(amount1)) => { to_print += "█"; },
+                    }
+                }
             }
         }
         to_print += right_side_padding;
     }
+
     // Add the status bar at the bottom
     let status_text = format!(
         "{nickname}: {score} ({score_place}), {kills} kills ({kills_place})",

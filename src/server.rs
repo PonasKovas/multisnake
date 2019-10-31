@@ -27,8 +27,8 @@ pub struct Server {
     pub client_streams: Arc<Mutex<HashMap<u16, TcpStream>>>,
     /// The size of the world that the server hosts
     pub world_size: (u16, u16),
-    /// A vector containing all objects in world: foods and snake parts
-    pub world: Arc<Mutex<Vec<Field>>>,
+    /// Holds data about the world: snake parts and foods.
+    pub world: Arc<Mutex<World>>,
     /// The amount of frames/ticks per second. Bigger number = faster gameplay
     pub game_speed: u8,
     /// How much food should be constantly in the world in relation to the world size
@@ -37,34 +37,53 @@ pub struct Server {
     pub port: u16,
 }
 
-/// Holds information about specific field in world and what's in it
-#[derive(Copy, Clone, Debug)]
-pub enum Field {
-    /// The field is empty
-    Empty,
-    /// There's food on this field. Contains a number - how much food
-    Food(u8),
-    /// There's a snake part on this field. Contains the ID of the owner snake
-    Snake(u16),
+/// Holds snake parts and food data together
+pub struct World {
+    pub snake_parts: Vec<SField>,
+    pub foods: Vec<FField>,
 }
+
+/// Holds the ID of the owner-snake of the part that is on the field. If there's no snake, holds 0.
+#[derive(Copy, Clone, Debug)]
+pub struct SField {
+    pub id: u16,
+}
+
+/// Holds the amount of food on the field.
+#[derive(Copy, Clone, Debug)]
+pub struct FField {
+    pub amount: u8,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct SnakePartPos (
+    u16,
+    u16,
+);
+
+#[derive(Copy, Clone, Debug)]
+pub struct FoodPos (
+    u32,
+    u32,
+);
 
 /// Contains data about a specific player
 pub struct Player {
     /// The nickname of the snake, chosen by the client
-    nickname: String,
+    pub nickname: String,
     /// The direction which the snake faces
-    direction: Direction,
+    pub direction: Direction,
     /// The direction which the snake was facing last tick.
     /// This is here to make sure that snakes don't do 180 degree turns
-    last_direction: Direction,
+    pub last_direction: Direction,
     /// Player's parts collection
-    parts: VecDeque<(u16, u16)>,
+    pub parts: VecDeque<SnakePartPos>,
     /// The amount of snakes this player killed
-    kills: u16,
+    pub kills: u16,
     /// The score of the player (how much food did it eat)
-    score: u16,
+    pub score: u16,
     /// When in fast mode, snakes move 2x faster but lose length and score
-    fast_mode: bool,
+    pub fast_mode: bool,
 }
 
 /// A simple enum used to express the direction a snake is facing
@@ -78,7 +97,7 @@ pub enum Direction {
 
 impl Direction {
     /// Returns `true` if the given directions are opposite of each other
-    pub fn is_opposite_of(self: Self, other: Self) -> bool {
+    pub fn is_opposite_of(self, other: Self) -> bool {
         (self as i8 + 2) % 4 == other as i8
     }
     /// Constructs the Direction enum from a u8 integer
@@ -91,7 +110,7 @@ impl Direction {
         }
     }
     /// Converts the Direction to an Euclidean vector (not the collection)
-    pub fn to_vector(self: Self) -> (i32, i32) {
+    pub fn to_vector(self) -> (i32, i32) {
         match self {
             Direction::Left => (-1, 0),
             Direction::Right => (1, 0),
@@ -113,7 +132,8 @@ impl Server {
     ) {
         println!(
             "Reserving memory for world... ({} bytes)",
-            std::mem::size_of::<Field>() as u32 * world_size.0 as u32 * world_size.1 as u32
+            std::mem::size_of::<SField>() as u32 * world_size.0 as u32 * world_size.1 as u32 +
+            std::mem::size_of::<FField>() as u32 * world_size.0 as u32 * world_size.1 as u32 * 4u32
         );
         let now = Instant::now();
 
@@ -122,11 +142,20 @@ impl Server {
             players: Arc::new(Mutex::new(HashMap::new())),
             client_streams: Arc::new(Mutex::new(HashMap::new())),
             world_size,
-            world: Arc::new(Mutex::new(vec![
-                Field::Empty;
-                world_size.0 as usize
-                    * world_size.1 as usize
-            ])),
+            world: Arc::new(
+                Mutex::new(
+                    World{
+                        snake_parts: vec![
+                            SField{id: 0};
+                            world_size.0 as usize * world_size.1 as usize
+                        ],
+                        foods: vec![
+                            FField{amount: 0};
+                            world_size.0 as usize * world_size.1 as usize * 4usize
+                        ],
+                    }
+                )
+            ),
             game_speed,
             food_rate,
             port,
@@ -136,14 +165,15 @@ impl Server {
 
         // Generate foods
         let amount_of_foods =
-            ((world_size.0 as u32 * world_size.1 as u32) as f64 / food_rate as f64) as u32;
+            ((world_size.0 as u32 * world_size.1 as u32 * 4) as f64 / food_rate as f64) as u32;
         println!("Generating food... ({})", amount_of_foods);
         let now = Instant::now();
-
         let mut rng = thread_rng();
+        let mut world = server.world.lock().unwrap();
         for _ in 0..amount_of_foods {
-            server.add_food(&mut rng, &mut server.world.lock().unwrap());
+            server.add_food(&mut rng, &mut world);
         }
+        drop(world);
 
         println!("Done! ({:.4} seconds)", now.elapsed().as_secs_f64());
 
@@ -198,46 +228,52 @@ impl Server {
         }
     }
     /// Adds a single food object to a random place
-    pub fn add_food(&self, rng: &mut ThreadRng, world_lock: &mut MutexGuard<Vec<Field>>) {
-        let mut pos = (
-            rng.gen::<u16>() % self.world_size.0,
-            rng.gen::<u16>() % self.world_size.1,
+    pub fn add_food(&self, rng: &mut ThreadRng, world_lock: &mut MutexGuard<World>) {
+        let mut pos = FoodPos(
+            rng.gen::<u32>() % (self.world_size.0 as u32 *2),
+            rng.gen::<u32>() % (self.world_size.1 as u32 *2),
         );
 
         loop {
-            // Check if there's any snake on the generated position
-            let field = world_lock[self.coordinates_to_index(pos)];
-            if let Field::Food(amount) = field {
-                // Make sure that there's still room for more food
-                if amount != 255 {
+            // Make sure there's no snake on the generated position
+            if world_lock.snake_parts[self.ff_to_sf_index(pos)].id == 0 {
+                if world_lock.foods[self.ffield_index(pos)].amount < 255 {
                     // Good position
                     break;
                 }
-            } else if let Field::Empty = field {
-                // Good position
-                break;
             }
 
             // Choose a new neighbor position and try again
             pos.0 += 1;
-            if pos.0 / self.world_size.0 == 1 {
+            if pos.0 / (self.world_size.0 as u32 *2) == 1 {
                 pos.0 = 0;
-                pos.1 = (pos.1 + 1) % self.world_size.1;
+                pos.1 = (pos.1 + 1) % (self.world_size.1 as u32 *2);
             }
         }
 
         // Add the food to the generated position
-        // If there's already food, just increment the count
-        if let Field::Food(amount) = world_lock[self.coordinates_to_index(pos)] {
-            world_lock[self.coordinates_to_index(pos)] = Field::Food(amount + 1);
-        } else {
-            world_lock[self.coordinates_to_index(pos)] = Field::Food(1);
-        }
+        world_lock.foods[self.ffield_index(pos)].amount += 1;
     }
-    /// Takes coordinates and returns an usize integer for indexing world
-    #[inline(always)]
-    pub fn coordinates_to_index(&self, coordinates: (u16, u16)) -> usize {
-        ((coordinates.0 as usize) * self.world_size.1 as usize) + coordinates.1 as usize
+    /// Takes coordinates and returns an usize integer for indexing snake_parts of world
+    pub fn sfield_index(&self, coordinates: SnakePartPos) -> usize {
+        ((coordinates.1 as usize) * self.world_size.0 as usize) + coordinates.0 as usize
+    }
+    /// Takes coordinates and returns an usize integer for indexing foods of world
+    pub fn ffield_index(&self, coordinates: FoodPos) -> usize {
+        ((coordinates.1 as usize) * self.world_size.0 as usize * 2) + coordinates.0 as usize
+    }
+    /// Takes snake parts coordinates, converts them to foods coordinates and returns an array of usize integers for indexing
+    pub fn sf_to_ff_index(&self, coordinates: SnakePartPos) -> [usize; 4] {
+        [
+            0 + 2 * coordinates.0 as usize + (4 * coordinates.1 as usize + 0) * self.world_size.0 as usize,
+            1 + 2 * coordinates.0 as usize + (4 * coordinates.1 as usize + 0) * self.world_size.0 as usize,
+            0 + 2 * coordinates.0 as usize + (4 * coordinates.1 as usize + 2) * self.world_size.0 as usize,
+            1 + 2 * coordinates.0 as usize + (4 * coordinates.1 as usize + 2) * self.world_size.0 as usize,
+        ]
+    }
+    /// Takes foods coordinates, converts them to snake parts coordinates and returns an usize integer for indexing
+    pub fn ff_to_sf_index(&self, coordinates: FoodPos) -> usize {
+        coordinates.0 as usize / 2 + (coordinates.1 as usize / 2) * self.world_size.0 as usize
     }
     /// Accepts and handles new connections
     pub fn accept_connections(self) {
@@ -319,8 +355,8 @@ impl Server {
                 return;
             }
             // generate an ID for this new player
-            let mut id: u16 = 0;
-            for i in 0..=u16::max_value() as u32 {
+            let mut id: u16 = 1;
+            for i in 1..=u16::max_value() as u32 {
                 if !players.contains_key(&(i as u16)) {
                     id = i as u16;
                     break;
@@ -371,7 +407,7 @@ impl Server {
         // Generate random direction
         let direction = Direction::from_byte(thread_rng().gen_range(0, 4) as u8);
         // Generate parts positions
-        let parts = self.generate_snake_parts(direction, id)?;
+        let (parts, eaten) = self.generate_snake_parts(direction, id)?;
 
         let player = Player {
             nickname: nickname.to_owned(),
@@ -379,7 +415,7 @@ impl Server {
             last_direction: direction,
             parts,
             kills: 0,
-            score: 0,
+            score: eaten,
             fast_mode: false,
         };
 
@@ -394,57 +430,57 @@ impl Server {
         &self,
         direction: Direction,
         id: u16,
-    ) -> Result<VecDeque<(u16, u16)>, ()> {
+    ) -> Result<(VecDeque<SnakePartPos>, u16), ()> {
         let mut parts = VecDeque::with_capacity(3);
         let direction_vector = direction.to_vector();
-        let mut head_pos: (u16, u16) = (
+        let mut head_pos = SnakePartPos(
             thread_rng().gen_range(0, self.world_size.0) as u16,
             thread_rng().gen_range(0, self.world_size.1) as u16,
         );
-        for _ in 0..(self.world_size.0 as u32 * self.world_size.1 as u32) {
+        'field: for _ in 0..(self.world_size.0 as u32 * self.world_size.1 as u32) {
             head_pos.0 += 1;
             if head_pos.0 == self.world_size.0 {
                 head_pos.0 = 0;
                 head_pos.1 = (head_pos.1 + 1) % self.world_size.1;
             }
-            let part2_pos = (
+            let part2_pos = SnakePartPos(
                 (((head_pos.0 as i32) - direction_vector.0 + self.world_size.0 as i32) as u32
                     % self.world_size.0 as u32) as u16,
                 (((head_pos.1 as i32) - direction_vector.1 + self.world_size.1 as i32) as u32
                     % self.world_size.1 as u32) as u16,
             );
-            let part3_pos = (
+            let part3_pos = SnakePartPos(
                 (((head_pos.0 as i32) - 2 * direction_vector.0 + self.world_size.0 as i32) as u32
                     % self.world_size.0 as u32) as u16,
                 (((head_pos.1 as i32) - 2 * direction_vector.1 + self.world_size.1 as i32) as u32
                     % self.world_size.1 as u32) as u16,
             );
-            // If there's another snake part or food already there, generate another position
+            // If there's another snake part already there, generate another position,
             let mut world = self.world.lock().unwrap();
-
-            if let Field::Snake(..) | Field::Food(..) = world[self.coordinates_to_index(head_pos)] {
-                continue;
-            }
-            if let Field::Snake(..) | Field::Food(..) = world[self.coordinates_to_index(part2_pos)]
-            {
-                continue;
-            }
-            if let Field::Snake(..) | Field::Food(..) = world[self.coordinates_to_index(part3_pos)]
-            {
-                continue;
+            for part in vec![head_pos, part2_pos, part3_pos] {
+                if world.snake_parts[self.sfield_index(part)].id != 0 {
+                    // There's another snake here, try another position
+                    continue 'field;
+                }
             }
 
             // All good bro 😎👍
+
+            // Now eat all the food which is on the fields that we will spawn on
+            let mut eaten = 0;
+            for part in vec![head_pos, part2_pos, part3_pos] {
+                for foodfield in self.sf_to_ff_index(part).iter() {
+                    eaten += world.foods[*foodfield].amount as u16;
+                    world.foods[*foodfield].amount = 0;
+                }
+                world.snake_parts[self.sfield_index(part)].id = id;
+            }
 
             parts.push_front(head_pos);
             parts.push_front(part2_pos);
             parts.push_front(part3_pos);
 
-            world[self.coordinates_to_index(head_pos)] = Field::Snake(id);
-            world[self.coordinates_to_index(part2_pos)] = Field::Snake(id);
-            world[self.coordinates_to_index(part3_pos)] = Field::Snake(id);
-
-            return Ok(parts);
+            return Ok((parts, eaten));
         }
         Err(())
     }
@@ -490,7 +526,6 @@ impl Server {
                             "connection to player \"{}\" was lost: {:?}",
                             players[&id].nickname, e
                         );
-
                         // Remove the snake
                         self.remove_snake(id, &mut players, &mut self.world.lock().unwrap());
                         // Remove the stream object
@@ -507,18 +542,15 @@ impl Server {
                     if new_direction.is_opposite_of(players[&id].last_direction) {
                         continue;
                     }
-
                     // Otherwise save the new direction
                     players.get_mut(&id).unwrap().direction = new_direction;
                 }
-
                 // Messages starting with \x08 are requests to toggle fast mode
                 if bytes.len() == 1 && bytes[0] == 0x08 {
                     // Make sure the snake has at least 1 score
                     if players[&id].score == 0 {
                         continue;
                     }
-
                     // Ok, toggle it
                     players.get_mut(&id).unwrap().fast_mode = !players[&id].fast_mode;
                 }
@@ -531,27 +563,34 @@ impl Server {
         &self,
         id: u16,
         players_lock: &mut MutexGuard<HashMap<u16, Player>>,
-        mut world_lock: &mut MutexGuard<Vec<Field>>,
+        mut world_lock: &mut MutexGuard<World>,
     ) {
         // Generate food where the snake was
+        let mut food_iterator = score_to_foods(players_lock[&id].score).into_iter();
+        let snake_length = calc_length(players_lock[&id].score);
         let mut rng = thread_rng();
-        for i in 0..players_lock[&id].score {
-            match players_lock[&id].parts.get(i as usize) {
+        for i in 0..snake_length {
+            match players_lock[&id].parts.get(i) {
                 Some(coordinates) => {
-                    world_lock[self.coordinates_to_index(*coordinates)] = Field::Food(1);
-                }
+                    for field in self.sf_to_ff_index(*coordinates).iter() {
+                        world_lock.foods[*field].amount = food_iterator.next().expect("food_iterator unexpectedly ended");
+                    }
+                    world_lock.snake_parts[self.sfield_index(*coordinates)].id = 0;
+                },
                 None => {
-                    self.add_food(&mut rng, &mut world_lock);
-                }
+                    break;
+                },
             }
+        }
+        // Calculate how much food is left to drop, and then drop it
+        for _ in 0..food_iterator.fold(0u16, |sum, x| sum + x as u16) {
+            self.add_food(&mut rng, &mut world_lock);
         }
 
         // Remove all left-over snake parts from world
-        if (players_lock[&id].score as usize) < players_lock[&id].parts.len() {
-            for i in 0..(players_lock[&id].parts.len() - players_lock[&id].score as usize) {
-                let field = players_lock[&id].parts[i + players_lock[&id].score as usize];
-                world_lock[self.coordinates_to_index(field)] = Field::Empty;
-            }
+        for i in 0..players_lock[&id].parts.len().saturating_sub(snake_length) {
+            let field = players_lock[&id].parts[i + snake_length];
+            world_lock.snake_parts[self.sfield_index(field)].id = 0;
         }
 
         // Remove the player object from the players list
@@ -593,24 +632,18 @@ impl Server {
                 new_head_pos.0 = (((new_head_pos.0 as i32 + dx) + width) % width) as u16;
                 new_head_pos.1 = (((new_head_pos.1 as i32 + dy) + height) % height) as u16;
 
-                // If the head is on food, eat it
-                if let Field::Food(amount) = world[self.coordinates_to_index(new_head_pos)] {
-                    players.get_mut(&snake_id).unwrap().score += amount as u16;
-                } else if let Field::Snake(id) = world[self.coordinates_to_index(new_head_pos)] {
+                // Check if crashed
+                if world.snake_parts[self.sfield_index(new_head_pos)].id != 0 {
                     // CRASH!
+                    let foreign_id = world.snake_parts[self.sfield_index(new_head_pos)].id;
                     // Add a kill for the snake that killed it, unless it was a suicide
-                    if id != snake_id {
-                        players.get_mut(&id).unwrap().kills += 1;
+                    if foreign_id != snake_id {
+                        players.get_mut(&foreign_id).unwrap().kills += 1;
                     }
                     // Send a message to them telling them that they're dead
                     // message starting with \x03 means that you died
                     send_to_stream(
-                        &mut self
-                            .client_streams
-                            .lock()
-                            .unwrap()
-                            .get_mut(&snake_id)
-                            .unwrap(),
+                        &mut self.client_streams.lock().unwrap().get_mut(&snake_id).unwrap(),
                         &[0x03],
                     );
 
@@ -622,13 +655,19 @@ impl Server {
                     continue 'snake;
                 }
 
+                // Eat all the food on the head position
+                for foodfield in self.sf_to_ff_index(new_head_pos).iter() {
+                    players.get_mut(&snake_id).unwrap().score += world.foods[*foodfield].amount as u16;
+                    world.foods[*foodfield].amount = 0;
+                }
+
                 // Add the new part to the head
                 players
                     .get_mut(&snake_id)
                     .unwrap()
                     .parts
                     .push_back(new_head_pos);
-                world[self.coordinates_to_index(new_head_pos)] = Field::Snake(snake_id);
+                world.snake_parts[self.sfield_index(new_head_pos)].id = snake_id;
             }
 
             // If in fast mode, remove 1 score
@@ -639,7 +678,7 @@ impl Server {
             let mut tail_pos = None;
             // If needed, remove parts from tail
             for _ in 0..((players[&snake_id].parts.len() - 3) as u16)
-                .saturating_sub(players[&snake_id].score)
+                .saturating_sub(calc_length(players[&snake_id].score) as u16)
             {
                 tail_pos = Some(
                     players
@@ -649,14 +688,14 @@ impl Server {
                         .pop_front()
                         .unwrap(),
                 );
-                world[self.coordinates_to_index(tail_pos.unwrap())] = Field::Empty;
+                world.snake_parts[self.sfield_index(tail_pos.unwrap())].id = 0;
             }
 
             // If was in fast mode, add food on tail
             if players[&snake_id].fast_mode {
                 match tail_pos {
                     Some(pos) => {
-                        world[self.coordinates_to_index(pos)] = Field::Food(1);
+                        world.foods[self.sf_to_ff_index(pos)[thread_rng().gen::<usize>() % 4]].amount = 1;
                     }
                     None => {
                         self.add_food(&mut thread_rng(), &mut world);
@@ -670,7 +709,7 @@ impl Server {
         let players = self.players.lock().unwrap();
         let world = self.world.lock().unwrap();
         // First generate the general/shared part of the
-        // buffer that's going to be sent to each player
+        // buffer that's going to be sent to all players
         let mut bytes: Vec<u8> = Vec::new();
 
         // \x04 means that it's the game data
@@ -705,25 +744,33 @@ impl Server {
             // Iterate through every field in the view of the player
             for y in -14i32..15i32 {
                 for x in -24i32..25i32 {
-                    let field: (u16, u16) = (
+                    let field = SnakePartPos(
                         ((player_head_pos.0 as i32 + x + world_size.0 * 2) % world_size.0) as u16,
                         ((player_head_pos.1 as i32 + y + world_size.1 * 2) % world_size.1) as u16,
                     );
+
                     // Check if there's any snake here
-                    if let Field::Snake(snake_id) = world[self.coordinates_to_index(field)] {
-                        // there is
+                    if world.snake_parts[self.sfield_index(field)].id != 0 {
+                        // There is
                         temp_snakes.push((x as i8).to_be_bytes()[0]); // x pos (relative to player's head) of snake part -> 1 byte
                         temp_snakes.push((y as i8).to_be_bytes()[0]); // y pos (relative to player's head) of snake part -> 1 byte
                                                                       // id of the snake that the part belongs to -> 2 bytes
-                        temp_snakes.extend_from_slice(&snake_id.to_be_bytes()[..]);
-
-                    // Check if there's any food here
-                    } else if let Field::Food(amount) = world[self.coordinates_to_index(field)] {
-                        // there is
-                        temp_foods.push((x as i8).to_be_bytes()[0]); // x pos (relative to player's head) of food -> 1 byte
-                        temp_foods.push((y as i8).to_be_bytes()[0]); // y pos (relative to player's head) of food -> 1 byte
-                                                                     // amount of food here -> 1 byte
-                        temp_foods.push(amount.to_be_bytes()[0]);
+                        temp_snakes.extend_from_slice(
+                            &world.snake_parts[self.sfield_index(field)].id.to_be_bytes()[..]
+                        );
+                    } else {
+                        // Check if there's any food here
+                        for (i, &foodfield) in self.sf_to_ff_index(field).iter().enumerate() {
+                            if world.foods[foodfield].amount > 0 {
+                                // There is
+                                temp_foods.push((x as i8 *2 + if i==1||i==3{1}else{0}).to_be_bytes()[0]); // x pos (relative to player's head) of food -> 1 byte
+                                temp_foods.push((y as i8 *2 + if i==2||i==3{1}else{0}).to_be_bytes()[0]); // y pos (relative to player's head) of food -> 1 byte
+                                                                             // amount of food here -> 1 byte
+                                temp_foods.push(
+                                    world.foods[foodfield].amount.to_be_bytes()[0]
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -788,4 +835,25 @@ pub fn send_to_stream(stream: &mut TcpStream, data: &[u8]) {
     message.extend_from_slice(data);
 
     let _ = stream.write_all(&message);
+}
+
+
+/// Takes a score as an argument and returns a vector of foods that they snake should drop
+pub fn score_to_foods(score: u16) -> Vec<u8> {
+    // The count of separate fields that the food will be dropped to
+    let count = calc_length(score) * 4;
+    let mut foods = Vec::with_capacity(count);
+
+    let mut n = score as i32;
+    for i in 0..count {
+        let amount = (n as f32 / (count-i) as f32).ceil() as u8;
+        n -= amount as i32;
+        foods.push(amount);
+    }
+    foods
+}
+
+/// Takes a score as an argument and returns the length of snake
+pub fn calc_length(score: u16) -> usize {
+    (score as f32).sqrt().ceil() as usize
 }

@@ -31,7 +31,7 @@ fn main() {
     );
     let food_rate_help = format!("[Server] Rate of how much food should be constantly in the world in relation to the world size, bigger number = less food (Default {default}) ({min}-{max})",
 							   		default=server::DEFAULT_FOOD_RATE,
-							   		min=u8::min_value()+2,
+							   		min=u8::min_value()+1,
 							   		max=u8::max_value());
 
     let mut matches = App::new("Multisnake")
@@ -210,8 +210,8 @@ fn main() {
             .parse()
         {
             Ok(n) => {
-                if n < 2 {
-                    println!("Food rate can not be 0 or 1!");
+                if n < 1 {
+                    println!("Food rate can not be 0!");
                     return;
                 }
                 n
