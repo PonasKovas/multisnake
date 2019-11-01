@@ -1,13 +1,13 @@
-use crossterm::{input, InputEvent, KeyEvent, AlternateScreen, RawScreen};
 use crossterm::input::AsyncReader;
-use std::io::{Read, Write, stdin};
+use crossterm::{input, AlternateScreen, InputEvent, KeyEvent, RawScreen};
+use std::collections::HashMap;
+use std::io::{stdin, Read, Write};
 use std::net::TcpStream;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::thread::sleep;
 use std::time::Duration;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::collections::HashMap;
 
 const SNAKE_COLORS: [&str; 9] = [
     "\x1b[41;30;1m",  // Red
@@ -30,20 +30,18 @@ const FOOD_COLORS: [(&str, &str); 4] = [
 ];
 
 // Magic networking bytes:
-const  MAGIC_NET_REQUEST_TO_PLAY: u8 = 0x00;
+const MAGIC_NET_REQUEST_TO_PLAY: u8 = 0x00;
 const MAGIC_NET_CHANGE_DIRECTION: u8 = 0x02;
-const            MAGIC_NET_DEATH: u8 = 0x03;
-const        MAGIC_NET_GAME_DATA: u8 = 0x04;
-const            MAGIC_NET_ERROR: u8 = 0x05;
-const      MAGIC_NET_JOINED_GAME: u8 = 0x06;
-const      MAGIC_NET_TOGGLE_FAST: u8 = 0x08;
-const             MAGIC_NET_EXIT: u8 = 0x09;
-
+const MAGIC_NET_DEATH: u8 = 0x03;
+const MAGIC_NET_GAME_DATA: u8 = 0x04;
+const MAGIC_NET_ERROR: u8 = 0x05;
+const MAGIC_NET_JOINED_GAME: u8 = 0x06;
+const MAGIC_NET_TOGGLE_FAST: u8 = 0x08;
+const MAGIC_NET_EXIT: u8 = 0x09;
 
 pub enum Exit {
-    Exit,
     Continue,
-    Restart,
+    Death,
 }
 
 /// Connects to the server and starts the client
@@ -51,7 +49,10 @@ pub fn start(ip: String, port: u16, nickname: String) {
     println!("connecting to {}:{} with nickname {}", ip, port, nickname);
     let mut stream = match TcpStream::connect((&ip[..], port)) {
         Ok(stream) => stream,
-        Err(e) => { println!("Couldn't connect to host: {}", e); return; }
+        Err(e) => {
+            println!("Couldn't connect to host: {}", e);
+            return;
+        }
     };
 
     // Send my nickname as a request to connect to the game
@@ -91,7 +92,12 @@ pub fn start(ip: String, port: u16, nickname: String) {
     println!("Connected successfully! My ID: {}", my_id);
 
     // Spawn the thread for handling user input and sending to server
-    let stream_clone = stream.try_clone().expect("Couldn't clone the TCP stream to server.");
+    let stream_ref = Arc::new(Mutex::new(Some(
+        stream
+            .try_clone()
+            .expect("Couldn't clone the TCP stream to server."),
+    )));
+    let stream_ref_clone = stream_ref.clone();
     let exit_input_handler = Arc::new(AtomicBool::new(false));
     let exit_input_handler_clone = exit_input_handler.clone();
     let input = input();
@@ -101,14 +107,23 @@ pub fn start(ip: String, port: u16, nickname: String) {
     // Hide the carriage
     print!("\x1b[?25l");
     // Move to an alternate screen and into raw mode
-    let alternate_screen_guard = Arc::new(AlternateScreen::to_alternate(true)
-        .expect("Failed to put terminal into alternative screen."));
+    let alternate_screen_guard = Arc::new(
+        AlternateScreen::to_alternate(true)
+            .expect("Failed to put terminal into alternative screen."),
+    );
     let ref_to_altscreen_guard = alternate_screen_guard.clone();
 
     // A thread for handling user input
     let join_handle = thread::Builder::new()
         .name("input_handler".to_string())
-        .spawn(move || handle_input(stream_clone, async_reader, exit_input_handler_clone, ref_to_altscreen_guard))
+        .spawn(move || {
+            handle_input(
+                stream_ref_clone,
+                async_reader,
+                exit_input_handler_clone,
+                ref_to_altscreen_guard,
+            )
+        })
         .unwrap();
 
     // The main thread will be reading data from server and drawing it for the user
@@ -123,21 +138,50 @@ pub fn start(ip: String, port: u16, nickname: String) {
             Ok(bytes) => bytes,
         };
         // Handle it and draw the frame
-        match handle_server_message(bytes, my_id, world_size, alternate_screen_guard.clone()) {
-            Exit::Exit => {return;},
-            Exit::Restart => {
-                exit_input_handler.store(true, Ordering::Relaxed);
-                join_handle.join().unwrap();
-                start(ip, port, nickname);
-                return;
-            },
-            _ => {},
+        if let Exit::Death = handle_server_message(bytes, my_id, world_size) {
+            *stream_ref.lock().unwrap() = None;
+            if let Some((w, h)) = term_size::dimensions() {
+                let text = "You died! Play again? [y/n]";
+                let line = (h - 1) / 2;
+                let column = (w - text.len()) / 2;
+                print!(
+                    "\x1b[{line};{column}H\x1b[107;30;1m{text}\x1b[0m",
+                    line = line,
+                    column = column,
+                    text = text
+                );
+                std::io::stdout().flush().unwrap();
+                let stdin = stdin();
+                let mut stdinlock = stdin.lock();
+                let mut c = [0u8];
+                loop {
+                    stdinlock.read_exact(&mut c[..]).unwrap();
+                    if c[0] == b'y' {
+                        drop(stdinlock);
+                        exit_input_handler.store(true, Ordering::Relaxed);
+                        join_handle.join().unwrap();
+                        start(ip, port, nickname);
+                        return;
+                    }
+                    if c[0] == b'n' {
+                        break;
+                    }
+                }
+            }
+            exit_input_handler.store(true, Ordering::Relaxed);
+            join_handle.join().unwrap();
+            return;
         }
     }
 }
 
 /// Reads all input from user and sends valid directions to server
-pub fn handle_input(mut stream: TcpStream, mut input: AsyncReader, exit: Arc<AtomicBool>, altscreen_guard: Arc<AlternateScreen>) {
+pub fn handle_input(
+    stream: Arc<Mutex<Option<TcpStream>>>,
+    mut input: AsyncReader,
+    exit: Arc<AtomicBool>,
+    altscreen_guard: Arc<AlternateScreen>,
+) {
     loop {
         if let Some(event) = input.next() {
             match event {
@@ -148,29 +192,45 @@ pub fn handle_input(mut stream: TcpStream, mut input: AsyncReader, exit: Arc<Ato
                     altscreen_guard.to_main().unwrap();
                     RawScreen::disable_raw_mode().unwrap();
                     print!("\x1b[?25h");
+                    std::io::stdout().flush().unwrap();
                     // Send message to server
-                    send_to_stream(&mut stream, &[MAGIC_NET_EXIT]);
+                    if let Some(s) = stream.lock().unwrap().as_mut() {
+                        send_to_stream(s, &[MAGIC_NET_EXIT]);
+                    }
                     std::process::exit(0);
                 }
                 // A or Left arrow - move left
-                InputEvent::Keyboard(KeyEvent::Char('a')) | InputEvent::Keyboard(KeyEvent::Left) => {
-                    send_direction(&mut stream, 0);
+                InputEvent::Keyboard(KeyEvent::Char('a'))
+                | InputEvent::Keyboard(KeyEvent::Left) => {
+                    if let Some(s) = stream.lock().unwrap().as_mut() {
+                        send_direction(s, 0);
+                    }
                 }
                 // S or Down arrow - move down
-                InputEvent::Keyboard(KeyEvent::Char('s')) | InputEvent::Keyboard(KeyEvent::Down) => {
-                    send_direction(&mut stream, 3);
+                InputEvent::Keyboard(KeyEvent::Char('s'))
+                | InputEvent::Keyboard(KeyEvent::Down) => {
+                    if let Some(s) = stream.lock().unwrap().as_mut() {
+                        send_direction(s, 3);
+                    }
                 }
                 // D or Right arrow - move right
-                InputEvent::Keyboard(KeyEvent::Char('d')) | InputEvent::Keyboard(KeyEvent::Right) => {
-                    send_direction(&mut stream, 2);
+                InputEvent::Keyboard(KeyEvent::Char('d'))
+                | InputEvent::Keyboard(KeyEvent::Right) => {
+                    if let Some(s) = stream.lock().unwrap().as_mut() {
+                        send_direction(s, 2);
+                    }
                 }
                 // W or Up arrow - move up
                 InputEvent::Keyboard(KeyEvent::Char('w')) | InputEvent::Keyboard(KeyEvent::Up) => {
-                    send_direction(&mut stream, 1);
+                    if let Some(s) = stream.lock().unwrap().as_mut() {
+                        send_direction(s, 1);
+                    }
                 }
                 // Space to toggle fast mode
                 InputEvent::Keyboard(KeyEvent::Char(' ')) => {
-                    toggle_fast_mode(&mut stream);
+                    if let Some(s) = stream.lock().unwrap().as_mut() {
+                        toggle_fast_mode(s);
+                    }
                 }
                 _ => (),
             }
@@ -178,8 +238,12 @@ pub fn handle_input(mut stream: TcpStream, mut input: AsyncReader, exit: Arc<Ato
         // If we need to exit, exit
         if exit.load(Ordering::Relaxed) {
             altscreen_guard.to_main().unwrap();
-            send_to_stream(&mut stream, &[MAGIC_NET_EXIT]);
+            RawScreen::disable_raw_mode().unwrap();
             print!("\x1b[?25h");
+            std::io::stdout().flush().unwrap();
+            if let Some(s) = stream.lock().unwrap().as_mut() {
+                send_to_stream(s, &[MAGIC_NET_EXIT]);
+            }
             return;
         }
         sleep(Duration::from_millis(1));
@@ -200,22 +264,13 @@ pub fn toggle_fast_mode(mut stream: &mut TcpStream) {
 }
 
 /// Handles data sent by server and if the data is new game data, draws the new frame to user
-pub fn handle_server_message(data: Vec<u8>, my_id: u16, world_size: (u16, u16), altscreen_guard: Arc<AlternateScreen>) -> Exit {
+pub fn handle_server_message(data: Vec<u8>, my_id: u16, world_size: (u16, u16)) -> Exit {
     // Messages starting with:
     //  - \x03 mean that I died
     //  - \x04 mean that it's the game data
     if data.len() == 1 && data[0] == MAGIC_NET_DEATH {
         // Exit
-        altscreen_guard.to_main().unwrap();
-        RawScreen::disable_raw_mode().unwrap();
-        print!("\x1b[?25h");
-        println!("You died! Play again in the same server? [y/n]");
-        let mut answer = String::new();
-        stdin().read_line(&mut answer).unwrap();
-        if answer.starts_with("y") {
-            return Exit::Restart;
-        }
-        return Exit::Exit;
+        return Exit::Death;
     } else if data[0] == MAGIC_NET_GAME_DATA {
         // Parse the data
         let mut i = 1; // next byte to read
@@ -258,9 +313,12 @@ pub fn handle_server_message(data: Vec<u8>, my_id: u16, world_size: (u16, u16), 
         let mut foods: HashMap<(i8, i8), u8> = HashMap::new();
         for _food in 0..foods_amount {
             foods.insert(
-                (i8::from_be_bytes([data[i]]),     // X pos of food relative to my head
-                 i8::from_be_bytes([data[i + 1]])),// Y pos of food relative to my head
-                u8::from_be_bytes([data[i + 2]])); // amount of food there
+                (
+                    i8::from_be_bytes([data[i]]), // X pos of food relative to my head
+                    i8::from_be_bytes([data[i + 1]]),
+                ), // Y pos of food relative to my head
+                u8::from_be_bytes([data[i + 2]]),
+            ); // amount of food there
             i += 3;
         }
 
@@ -270,9 +328,12 @@ pub fn handle_server_message(data: Vec<u8>, my_id: u16, world_size: (u16, u16), 
         let mut snake_parts: HashMap<(i8, i8), u16> = HashMap::new();
         for _snake_part in 0..snake_parts_amount {
             snake_parts.insert(
-                (i8::from_be_bytes([data[i]]),     // X pos of part relative to my head
-                 i8::from_be_bytes([data[i + 1]])),// Y pos of part relative to my head
-                u16::from_be_bytes([data[i + 2], data[i + 3]])); // snake ID
+                (
+                    i8::from_be_bytes([data[i]]), // X pos of part relative to my head
+                    i8::from_be_bytes([data[i + 1]]),
+                ), // Y pos of part relative to my head
+                u16::from_be_bytes([data[i + 2], data[i + 3]]),
+            ); // snake ID
             i += 4;
         }
 
@@ -282,7 +343,15 @@ pub fn handle_server_message(data: Vec<u8>, my_id: u16, world_size: (u16, u16), 
         );
 
         // // OK, all the data is read and parsed - time to draw the frame
-        draw(my_id, snakes, foods, snake_parts, my_position, world_size, head_positions);
+        draw(
+            my_id,
+            snakes,
+            foods,
+            snake_parts,
+            my_position,
+            world_size,
+            head_positions,
+        );
     }
     Exit::Continue
 }
@@ -321,26 +390,31 @@ pub fn draw(
     // Iterate through all fields in the constructed ranges and check if there's anything there
     for y in height.clone() {
         for x in width.clone() {
-            if x < -24 || x > 24 || y < -14 || y > 14 { to_print += "  "; continue; }
+            if x < -24 || x > 24 || y < -14 || y > 14 {
+                to_print += "  ";
+                continue;
+            }
             if snake_parts.contains_key(&(x, y)) {
                 // Get the color
                 to_print += SNAKE_COLORS[(snake_parts[&(x, y)] % 9) as usize];
                 match (
                     snakes_info[&snake_parts[&(x, y)]].3,
                     head_positions.contains_key(&(
-                        ((x as i32 + my_pos.0 as i32 + world_size.0 as i32) % world_size.0 as i32) as u16,
-                        ((y as i32 + my_pos.1 as i32 + world_size.1 as i32) % world_size.1 as i32) as u16,
+                        ((x as i32 + my_pos.0 as i32 + world_size.0 as i32) % world_size.0 as i32)
+                            as u16,
+                        ((y as i32 + my_pos.1 as i32 + world_size.1 as i32) % world_size.1 as i32)
+                            as u16,
                     )),
                 ) {
                     (_, true) => {
                         to_print += "φφ"; // Eyes/Head
-                    },
+                    }
                     (false, _) => {
                         to_print += "[]"; // snake moving at normal speed
-                    },
+                    }
                     (true, _) => {
                         to_print += "╬╬"; // snake in fast mode
-                    },
+                    }
                 };
 
                 to_print += "\x1b[0m"; // reset colors
@@ -348,24 +422,26 @@ pub fn draw(
                 // Check for food
                 for i in 0..2 {
                     let fields = (
-                        foods.get(&(2*x + if i == 1 {1} else {0}, 2*y)),
-                        foods.get(&(2*x + if i == 1 {1} else {0}, 2*y + 1)),
+                        foods.get(&(2 * x + if i == 1 { 1 } else { 0 }, 2 * y)),
+                        foods.get(&(2 * x + if i == 1 { 1 } else { 0 }, 2 * y + 1)),
                     );
                     match fields {
-                        (None, None) => { to_print += " "; },
+                        (None, None) => {
+                            to_print += " ";
+                        }
                         (Some(amount), None) => {
                             to_print += foodcolor(*amount, false);
                             to_print += "▀";
-                        },
+                        }
                         (None, Some(amount)) => {
                             to_print += foodcolor(*amount, false);
                             to_print += "▄";
-                        },
+                        }
                         (Some(amount0), Some(amount1)) => {
                             to_print += foodcolor(*amount0, false);
                             to_print += foodcolor(*amount1, true);
                             to_print += "▀";
-                        },
+                        }
                     }
                     to_print += "\x1b[0m"; // reset colors
                 }
@@ -409,7 +485,9 @@ pub fn draw(
 
     // Print nicknames of snakes
     for head_pos in head_positions.keys() {
-        if head_positions[head_pos] == my_id { continue; }
+        if head_positions[head_pos] == my_id {
+            continue;
+        }
         let nick = &snakes_info[&head_positions[head_pos]].0;
         let leftpadding = " ".repeat(((10f32 - nick.len() as f32) / 2f32).floor() as usize);
         let rightpadding = " ".repeat(((10f32 - nick.len() as f32) / 2f32).ceil() as usize);
@@ -421,24 +499,39 @@ pub fn draw(
             for l in 0..4 {
                 // Check if the field is in frame
                 let pos_x = if l / 2 == 1 {
-                    2*(head_pos.0 as i32 - my_pos.0 as i32 - world_size.0 as i32 - width.start as i32) + i as i32 - 3
+                    2 * (head_pos.0 as i32
+                        - my_pos.0 as i32
+                        - world_size.0 as i32
+                        - width.start as i32)
+                        + i as i32
+                        - 3
                 } else {
-                    2*(head_pos.0 as i32 - my_pos.0 as i32 - width.start as i32) + i as i32 - 3
+                    2 * (head_pos.0 as i32 - my_pos.0 as i32 - width.start as i32) + i as i32 - 3
                 };
                 let pos_y = if l % 2 == 0 {
-                    (head_pos.1 as i32 - my_pos.1 as i32 - world_size.1 as i32 - height.start as i32) + 2
+                    (head_pos.1 as i32
+                        - my_pos.1 as i32
+                        - world_size.1 as i32
+                        - height.start as i32)
+                        + 2
                 } else {
                     (head_pos.1 as i32 - my_pos.1 as i32 - height.start as i32) + 2
                 };
-                if  pos_x >= 0 && pos_x <= real_terminal_size.0 as i32 &&
-                pos_y >= 0 && pos_y < real_terminal_size.1 as i32
+                if pos_x >= 0
+                    && pos_x <= real_terminal_size.0 as i32
+                    && pos_y >= 0
+                    && pos_y < real_terminal_size.1 as i32
                 {
-                    if nickname_bytes[i] == 0x20 { continue; } // Skip spaces
-                    // Move to the required position and print the text
-                    to_print += &format!("\x1b[{line};{column}H{text}",
-                        line=pos_y,
-                        column=pos_x,
-                        text=std::str::from_utf8(&[nickname_bytes[i]]).unwrap());
+                    if nickname_bytes[i] == 0x20 {
+                        continue;
+                    } // Skip spaces
+                      // Move to the required position and print the text
+                    to_print += &format!(
+                        "\x1b[{line};{column}H{text}",
+                        line = pos_y,
+                        column = pos_x,
+                        text = std::str::from_utf8(&[nickname_bytes[i]]).unwrap()
+                    );
                 }
             }
         }
@@ -549,5 +642,9 @@ pub fn foodcolor(amount: u8, bg: bool) -> &'static str {
         FOOD_COLORS[3]
     };
 
-    if bg { t.1 } else { t.0 }
+    if bg {
+        t.1
+    } else {
+        t.0
+    }
 }

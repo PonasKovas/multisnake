@@ -56,16 +56,10 @@ pub struct FField {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub struct SnakePartPos (
-    u16,
-    u16,
-);
+pub struct SnakePartPos(u16, u16);
 
 #[derive(Copy, Clone, Debug)]
-pub struct FoodPos (
-    u32,
-    u32,
-);
+pub struct FoodPos(u32, u32);
 
 /// Contains data about a specific player
 pub struct Player {
@@ -132,8 +126,11 @@ impl Server {
     ) {
         println!(
             "Reserving memory for world... ({} bytes)",
-            std::mem::size_of::<SField>() as u32 * world_size.0 as u32 * world_size.1 as u32 +
-            std::mem::size_of::<FField>() as u32 * world_size.0 as u32 * world_size.1 as u32 * 4u32
+            std::mem::size_of::<SField>() as u32 * world_size.0 as u32 * world_size.1 as u32
+                + std::mem::size_of::<FField>() as u32
+                    * world_size.0 as u32
+                    * world_size.1 as u32
+                    * 4u32
         );
         let now = Instant::now();
 
@@ -142,20 +139,13 @@ impl Server {
             players: Arc::new(Mutex::new(HashMap::new())),
             client_streams: Arc::new(Mutex::new(HashMap::new())),
             world_size,
-            world: Arc::new(
-                Mutex::new(
-                    World{
-                        snake_parts: vec![
-                            SField{id: 0};
-                            world_size.0 as usize * world_size.1 as usize
-                        ],
-                        foods: vec![
-                            FField{amount: 0};
-                            world_size.0 as usize * world_size.1 as usize * 4usize
-                        ],
-                    }
-                )
-            ),
+            world: Arc::new(Mutex::new(World {
+                snake_parts: vec![SField { id: 0 }; world_size.0 as usize * world_size.1 as usize],
+                foods: vec![
+                    FField { amount: 0 };
+                    world_size.0 as usize * world_size.1 as usize * 4usize
+                ],
+            })),
             game_speed,
             food_rate,
             port,
@@ -230,24 +220,24 @@ impl Server {
     /// Adds a single food object to a random place
     pub fn add_food(&self, rng: &mut ThreadRng, world_lock: &mut MutexGuard<World>) {
         let mut pos = FoodPos(
-            rng.gen::<u32>() % (self.world_size.0 as u32 *2),
-            rng.gen::<u32>() % (self.world_size.1 as u32 *2),
+            rng.gen::<u32>() % (self.world_size.0 as u32 * 2),
+            rng.gen::<u32>() % (self.world_size.1 as u32 * 2),
         );
 
         loop {
             // Make sure there's no snake on the generated position
-            if world_lock.snake_parts[self.ff_to_sf_index(pos)].id == 0 {
-                if world_lock.foods[self.ffield_index(pos)].amount < 255 {
-                    // Good position
-                    break;
-                }
+            if world_lock.snake_parts[self.ff_to_sf_index(pos)].id == 0
+                && world_lock.foods[self.ffield_index(pos)].amount < 255
+            {
+                // Good position
+                break;
             }
 
             // Choose a new neighbor position and try again
             pos.0 += 1;
-            if pos.0 / (self.world_size.0 as u32 *2) == 1 {
+            if pos.0 / (self.world_size.0 as u32 * 2) == 1 {
                 pos.0 = 0;
-                pos.1 = (pos.1 + 1) % (self.world_size.1 as u32 *2);
+                pos.1 = (pos.1 + 1) % (self.world_size.1 as u32 * 2);
             }
         }
 
@@ -265,10 +255,14 @@ impl Server {
     /// Takes snake parts coordinates, converts them to foods coordinates and returns an array of usize integers for indexing
     pub fn sf_to_ff_index(&self, coordinates: SnakePartPos) -> [usize; 4] {
         [
-            0 + 2 * coordinates.0 as usize + (4 * coordinates.1 as usize + 0) * self.world_size.0 as usize,
-            1 + 2 * coordinates.0 as usize + (4 * coordinates.1 as usize + 0) * self.world_size.0 as usize,
-            0 + 2 * coordinates.0 as usize + (4 * coordinates.1 as usize + 2) * self.world_size.0 as usize,
-            1 + 2 * coordinates.0 as usize + (4 * coordinates.1 as usize + 2) * self.world_size.0 as usize,
+            0 + 2 * coordinates.0 as usize
+                + (4 * coordinates.1 as usize + 0) * self.world_size.0 as usize,
+            1 + 2 * coordinates.0 as usize
+                + (4 * coordinates.1 as usize + 0) * self.world_size.0 as usize,
+            0 + 2 * coordinates.0 as usize
+                + (4 * coordinates.1 as usize + 2) * self.world_size.0 as usize,
+            1 + 2 * coordinates.0 as usize
+                + (4 * coordinates.1 as usize + 2) * self.world_size.0 as usize,
         ]
     }
     /// Takes foods coordinates, converts them to snake parts coordinates and returns an usize integer for indexing
@@ -457,8 +451,8 @@ impl Server {
             );
             // If there's another snake part already there, generate another position,
             let mut world = self.world.lock().unwrap();
-            for part in vec![head_pos, part2_pos, part3_pos] {
-                if world.snake_parts[self.sfield_index(part)].id != 0 {
+            for part in &[head_pos, part2_pos, part3_pos] {
+                if world.snake_parts[self.sfield_index(*part)].id != 0 {
                     // There's another snake here, try another position
                     continue 'field;
                 }
@@ -468,12 +462,12 @@ impl Server {
 
             // Now eat all the food which is on the fields that we will spawn on
             let mut eaten = 0;
-            for part in vec![head_pos, part2_pos, part3_pos] {
-                for foodfield in self.sf_to_ff_index(part).iter() {
+            for part in &[head_pos, part2_pos, part3_pos] {
+                for foodfield in self.sf_to_ff_index(*part).iter() {
                     eaten += world.foods[*foodfield].amount as u16;
                     world.foods[*foodfield].amount = 0;
                 }
-                world.snake_parts[self.sfield_index(part)].id = id;
+                world.snake_parts[self.sfield_index(*part)].id = id;
             }
 
             parts.push_front(head_pos);
@@ -581,13 +575,15 @@ impl Server {
             match players_lock[&id].parts.get(i) {
                 Some(coordinates) => {
                     for field in self.sf_to_ff_index(*coordinates).iter() {
-                        world_lock.foods[*field].amount = food_iterator.next().expect("food_iterator unexpectedly ended");
+                        world_lock.foods[*field].amount = food_iterator
+                            .next()
+                            .expect("food_iterator unexpectedly ended");
                     }
                     world_lock.snake_parts[self.sfield_index(*coordinates)].id = 0;
-                },
+                }
                 None => {
                     break;
-                },
+                }
             }
         }
         // Calculate how much food is left to drop, and then drop it
@@ -651,7 +647,12 @@ impl Server {
                     // Send a message to them telling them that they're dead
                     // message starting with \x03 means that you died
                     send_to_stream(
-                        &mut self.client_streams.lock().unwrap().get_mut(&snake_id).unwrap(),
+                        &mut self
+                            .client_streams
+                            .lock()
+                            .unwrap()
+                            .get_mut(&snake_id)
+                            .unwrap(),
                         &[0x03],
                     );
 
@@ -665,7 +666,8 @@ impl Server {
 
                 // Eat all the food on the head position
                 for foodfield in self.sf_to_ff_index(new_head_pos).iter() {
-                    players.get_mut(&snake_id).unwrap().score += world.foods[*foodfield].amount as u16;
+                    players.get_mut(&snake_id).unwrap().score +=
+                        world.foods[*foodfield].amount as u16;
                     world.foods[*foodfield].amount = 0;
                 }
 
@@ -703,7 +705,8 @@ impl Server {
             if players[&snake_id].fast_mode {
                 match tail_pos {
                     Some(pos) => {
-                        world.foods[self.sf_to_ff_index(pos)[thread_rng().gen::<usize>() % 4]].amount = 1;
+                        world.foods[self.sf_to_ff_index(pos)[thread_rng().gen::<usize>() % 4]]
+                            .amount = 1;
                     }
                     None => {
                         self.add_food(&mut thread_rng(), &mut world);
@@ -765,19 +768,23 @@ impl Server {
                         temp_snakes.push((y as i8).to_be_bytes()[0]); // y pos (relative to player's head) of snake part -> 1 byte
                                                                       // id of the snake that the part belongs to -> 2 bytes
                         temp_snakes.extend_from_slice(
-                            &world.snake_parts[self.sfield_index(field)].id.to_be_bytes()[..]
+                            &world.snake_parts[self.sfield_index(field)].id.to_be_bytes()[..],
                         );
                     } else {
                         // Check if there's any food here
                         for (i, &foodfield) in self.sf_to_ff_index(field).iter().enumerate() {
                             if world.foods[foodfield].amount > 0 {
                                 // There is
-                                temp_foods.push((x as i8 *2 + if i==1||i==3{1}else{0}).to_be_bytes()[0]); // x pos (relative to player's head) of food -> 1 byte
-                                temp_foods.push((y as i8 *2 + if i==2||i==3{1}else{0}).to_be_bytes()[0]); // y pos (relative to player's head) of food -> 1 byte
-                                                                             // amount of food here -> 1 byte
                                 temp_foods.push(
-                                    world.foods[foodfield].amount.to_be_bytes()[0]
-                                );
+                                    (x as i8 * 2 + if i == 1 || i == 3 { 1 } else { 0 })
+                                        .to_be_bytes()[0],
+                                ); // x pos (relative to player's head) of food -> 1 byte
+                                temp_foods.push(
+                                    (y as i8 * 2 + if i == 2 || i == 3 { 1 } else { 0 })
+                                        .to_be_bytes()[0],
+                                ); // y pos (relative to player's head) of food -> 1 byte
+                                   // amount of food here -> 1 byte
+                                temp_foods.push(world.foods[foodfield].amount.to_be_bytes()[0]);
                             }
                         }
                     }
@@ -846,7 +853,6 @@ pub fn send_to_stream(stream: &mut TcpStream, data: &[u8]) {
     let _ = stream.write_all(&message);
 }
 
-
 /// Takes a score as an argument and returns a vector of foods that they snake should drop
 pub fn score_to_foods(score: u16) -> Vec<u8> {
     // The count of separate fields that the food will be dropped to
@@ -855,7 +861,7 @@ pub fn score_to_foods(score: u16) -> Vec<u8> {
 
     let mut n = score as i32;
     for i in 0..count {
-        let amount = (n as f32 / (count-i) as f32).ceil() as u8;
+        let amount = (n as f32 / (count - i) as f32).ceil() as u8;
         n -= amount as i32;
         foods.push(amount);
     }
