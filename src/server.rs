@@ -534,7 +534,15 @@ impl Server {
                         break;
                     }
                 };
+                if bytes.len() == 1 && bytes[0] == 0x09 {
+                    println!("\"{}\" disconnected", players[&id].nickname);
+                    // Remove the snake
+                    self.remove_snake(id, &mut players, &mut self.world.lock().unwrap());
+                    // Remove the stream object
+                    client_streams.remove(&id);
 
+                    break;
+                }
                 // Messages starting with \x02 contain a new direction that a snake faces
                 if bytes.len() == 2 && bytes[0] == 0x02 {
                     let new_direction = Direction::from_byte(bytes[1]);
@@ -723,11 +731,12 @@ impl Server {
             let snake = &players[&snake_id];
             bytes.extend_from_slice(&snake_id.to_be_bytes()[..]); // id -> 2 bytes
             bytes.push(snake.nickname.len() as u8); // nickname length -> 1 byte
-            bytes.extend_from_slice(snake.nickname.as_bytes()); // nickname -> 1-20 bytes
+            bytes.extend_from_slice(snake.nickname.as_bytes()); // nickname -> 1-10 bytes
             bytes.extend_from_slice(&snake.score.to_be_bytes()[..]); // score -> 2 bytes
             bytes.extend_from_slice(&snake.kills.to_be_bytes()[..]); // kills -> 2 bytes
-            bytes.push(snake.fast_mode as u8);
-            // fast mode -> 1 byte
+            bytes.extend_from_slice(&snake.parts.back().unwrap().0.to_be_bytes()[..]); // head position X -> 2 bytes
+            bytes.extend_from_slice(&snake.parts.back().unwrap().1.to_be_bytes()[..]); // head position Y -> 2 bytes
+            bytes.push(snake.fast_mode as u8); // fast mode -> 1 byte
         }
 
         let world_size = (self.world_size.0 as i32, self.world_size.1 as i32);

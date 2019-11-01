@@ -123,7 +123,7 @@ impl Bot {
             if id == self.my_id {
                 in_fast_mode = u8::from_be_bytes([data[i + 7]]) == 1;
             }
-            i += 8;
+            i += 12;
         }
 
         // Foods
