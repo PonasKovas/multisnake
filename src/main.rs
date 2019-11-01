@@ -282,16 +282,18 @@ fn main() {
         }
 
         // Resolve the address of the entered hostname
-        match lookup_host(&ip).expect("could not resolve the IP").get(0) {
-            Some(addr) => {
-                ip = addr.to_string();
-            }
-            None => {
-                println!("Could not resolve the IP of host {}", ip);
-                return;
+        if ip != "localhost" {
+            match lookup_host(&ip).expect("could not resolve the IP").get(0) {
+                Some(addr) => {
+                    ip = addr.to_string();
+                }
+                None => {
+                    println!("Could not resolve the IP of host {}", ip);
+                    return;
+                }
             }
         }
-
+        
         // Start the client
         client::start(ip, port, nickname);
     }
