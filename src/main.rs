@@ -1,3 +1,5 @@
+#![feature(option_unwrap_none)]
+
 #[cfg(feature = "client")]
 mod client;
 #[cfg(feature = "server")]
@@ -293,7 +295,7 @@ fn main() {
                 }
             }
         }
-        
+
         // Start the client
         client::start(ip, port, nickname);
     }

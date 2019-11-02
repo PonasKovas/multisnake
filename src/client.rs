@@ -1,6 +1,7 @@
 use crossterm::input::AsyncReader;
 use crossterm::{input, AlternateScreen, InputEvent, KeyEvent, RawScreen};
-use std::collections::HashMap;
+use lazy_static::lazy_static;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{stdin, Read, Write};
 use std::net::TcpStream;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -8,6 +9,17 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::thread::sleep;
 use std::time::Duration;
+
+#[derive(Copy, Clone, Debug)]
+enum ShowLeaderboard {
+    Hide = 0,
+    ByScore,
+    ByKills,
+}
+
+lazy_static! {
+    static ref SHOW_LEADERBOARD: Mutex<ShowLeaderboard> = Mutex::new(ShowLeaderboard::ByScore);
+}
 
 const SNAKE_COLORS: [&str; 9] = [
     "\x1b[41;30;1m",  // Red
@@ -89,7 +101,7 @@ pub fn start(ip: String, port: u16, nickname: String) {
             }
         }
     };
-    println!("Connected successfully! My ID: {}", my_id);
+    println!("Connected successfully!");
 
     // Spawn the thread for handling user input and sending to server
     let stream_ref = Arc::new(Mutex::new(Some(
@@ -107,11 +119,8 @@ pub fn start(ip: String, port: u16, nickname: String) {
     // Hide the carriage
     print!("\x1b[?25l");
     // Move to an alternate screen and into raw mode
-    let alternate_screen_guard = Arc::new(
-        AlternateScreen::to_alternate(true)
-            .expect("Failed to put terminal into alternative screen."),
-    );
-    let ref_to_altscreen_guard = alternate_screen_guard.clone();
+    let alternate_screen_guard = AlternateScreen::to_alternate(true)
+        .expect("Failed to put terminal into alternative screen.");
 
     // A thread for handling user input
     let join_handle = thread::Builder::new()
@@ -121,7 +130,7 @@ pub fn start(ip: String, port: u16, nickname: String) {
                 stream_ref_clone,
                 async_reader,
                 exit_input_handler_clone,
-                ref_to_altscreen_guard,
+                alternate_screen_guard,
             )
         })
         .unwrap();
@@ -180,7 +189,7 @@ pub fn handle_input(
     stream: Arc<Mutex<Option<TcpStream>>>,
     mut input: AsyncReader,
     exit: Arc<AtomicBool>,
-    altscreen_guard: Arc<AlternateScreen>,
+    altscreen_guard: AlternateScreen,
 ) {
     loop {
         if let Some(event) = input.next() {
@@ -188,16 +197,16 @@ pub fn handle_input(
                 // ctrl-c or Q to quit the game
                 InputEvent::Keyboard(KeyEvent::Ctrl('c'))
                 | InputEvent::Keyboard(KeyEvent::Char('q')) => {
-                    // Show carriage, switch to main screen and terminate process
-                    altscreen_guard.to_main().unwrap();
-                    RawScreen::disable_raw_mode().unwrap();
-                    print!("\x1b[?25h");
-                    std::io::stdout().flush().unwrap();
-                    // Send message to server
                     if let Some(s) = stream.lock().unwrap().as_mut() {
+                        // Show carriage, switch to main screen and terminate process
+                        altscreen_guard.to_main().unwrap();
+                        RawScreen::disable_raw_mode().unwrap();
+                        print!("\x1b[?25h");
+                        std::io::stdout().flush().unwrap();
+                        // Send message to server
                         send_to_stream(s, &[MAGIC_NET_EXIT]);
+                        std::process::exit(0);
                     }
-                    std::process::exit(0);
                 }
                 // A or Left arrow - move left
                 InputEvent::Keyboard(KeyEvent::Char('a'))
@@ -230,6 +239,16 @@ pub fn handle_input(
                 InputEvent::Keyboard(KeyEvent::Char(' ')) => {
                     if let Some(s) = stream.lock().unwrap().as_mut() {
                         toggle_fast_mode(s);
+                    }
+                }
+                // L to toggle leaderboard
+                InputEvent::Keyboard(KeyEvent::Char('l')) => {
+                    // Toggle
+                    let next = (*SHOW_LEADERBOARD.lock().unwrap() as u8 + 1) % 3;
+                    *SHOW_LEADERBOARD.lock().unwrap() = match next {
+                        0 => ShowLeaderboard::Hide,
+                        1 => ShowLeaderboard::ByScore,
+                        _ => ShowLeaderboard::ByKills,
                     }
                 }
                 _ => (),
@@ -537,6 +556,38 @@ pub fn draw(
         }
     }
 
+    // If needed, print leaderboard
+    let show_board = *SHOW_LEADERBOARD.lock().unwrap();
+    if let ShowLeaderboard::ByScore | ShowLeaderboard::ByKills = show_board {
+        let column = real_terminal_size.0 - 20;
+        let (by_what, board) = match show_board {
+            ShowLeaderboard::ByScore => ("Score", get_top_by_score(&snakes_info)),
+            ShowLeaderboard::ByKills => ("Kills", get_top_by_kills(&snakes_info)),
+            _ => ("", Vec::new()),
+        };
+        let mut board = board.into_iter();
+        to_print += &format!(
+            "\x1b[1;{column}H\x1b[100;4;1m      By {what}       \x1b[0m",
+            column = column,
+            what = by_what
+        );
+        for ln in 2..11 {
+            let player = board.next();
+            let (nickname, score) = match player {
+                Some((n, s)) => (n, format!("({})", s)),
+                None => ("".to_string(), "".to_string()),
+            };
+            to_print += &format!("\x1b[{line};{column}H\x1b[100;1m{place}. \x1b[0m\x1b[100m{nickname}{padding}{score}\x1b[0m",
+                line=ln,
+                column=column,
+                place=ln-1,
+                nickname=nickname,
+                score=score,
+                padding=" ".repeat(18 - nickname.len() - score.len()),
+                );
+        }
+    }
+
     // Print and flush the output
     print!("{}", to_print);
     std::io::stdout().flush().unwrap();
@@ -600,6 +651,56 @@ pub fn get_place_by_kills(snakes_data: &HashMap<u16, (String, u16, u16, bool)>, 
     } else {
         place + &"th".to_string()
     }
+}
+
+pub fn get_top_by_score(
+    snakes_data: &HashMap<u16, (String, u16, u16, bool)>,
+) -> Vec<(String, u16)> {
+    // Put all the snakes in a binary tree map
+    let mut scores: BTreeMap<u16, Vec<&String>> = BTreeMap::new();
+    for (nickname, score, _kills, _) in snakes_data.values() {
+        match scores.get_mut(score) {
+            Some(other_nicknames) => {
+                other_nicknames.push(nickname);
+            }
+            None => {
+                scores.insert(*score, vec![nickname]).unwrap_none();
+            }
+        }
+    }
+    let scores = scores.iter().rev();
+    let mut result = Vec::new();
+    for s in scores {
+        for nick in s.1 {
+            result.push(((*nick).clone(), *s.0));
+        }
+    }
+    result
+}
+
+pub fn get_top_by_kills(
+    snakes_data: &HashMap<u16, (String, u16, u16, bool)>,
+) -> Vec<(String, u16)> {
+    // Put all the snakes in a binary tree map
+    let mut scores: BTreeMap<u16, Vec<&String>> = BTreeMap::new();
+    for (nickname, _score, kills, _) in snakes_data.values() {
+        match scores.get_mut(kills) {
+            Some(other_nicknames) => {
+                other_nicknames.push(nickname);
+            }
+            None => {
+                scores.insert(*kills, vec![nickname]).unwrap_none();
+            }
+        }
+    }
+    let scores = scores.iter().rev();
+    let mut result = Vec::new();
+    for s in scores {
+        for nick in s.1 {
+            result.push(((*nick).clone(), *s.0));
+        }
+    }
+    result
 }
 
 /// Sends bytes to stream, with the buffer length appended to the beginning as an u8 integer
