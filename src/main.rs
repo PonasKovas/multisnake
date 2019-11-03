@@ -14,25 +14,25 @@ use dns_lookup::lookup_host;
 fn main() {
     let max_players_help = format!(
         "[Server] Player limit for the server (Default {default}) ({min}-{max})",
-        default = server::DEFAULT_MAX_PLAYERS,
+        default = 50,
         min = u16::min_value(),
         max = u16::max_value()
     );
     let game_speed_help = format!(
         "[Server] Ticks per second (Default {default}) ({min}-{max})",
-        default = server::DEFAULT_GAME_SPEED,
+        default = 10,
         min = u8::min_value() + 1,
         max = u8::max_value()
     );
     let world_size_help = format!(
         "[Server] The size of the world (Default {default_width}x{default_height}) ({min}-{max})",
-        default_width = server::DEFAULT_WORLD_SIZE.0,
-        default_height = server::DEFAULT_WORLD_SIZE.1,
+        default_width = 200,
+        default_height = 200,
         min = u16::min_value() + 20,
         max = u16::max_value()
     );
     let food_rate_help = format!("[Server] Rate of how much food should be constantly in the world in relation to the world size, bigger number = less food (Default {default}) ({min}-{max})",
-							   		default=server::DEFAULT_FOOD_RATE,
+							   		default=10,
 							   		min=u8::min_value()+1,
 							   		max=u8::max_value());
 
@@ -151,7 +151,7 @@ fn main() {
         };
         let max_players: u16 = match matches
             .value_of("max_players")
-            .unwrap_or(&server::DEFAULT_MAX_PLAYERS.to_string())
+            .unwrap_or("50")
             .parse()
         {
             Ok(n) => n,
@@ -162,7 +162,7 @@ fn main() {
         };
         let game_speed: u8 = match matches
             .value_of("game_speed")
-            .unwrap_or(&server::DEFAULT_GAME_SPEED.to_string())
+            .unwrap_or("10")
             .parse()
         {
             Ok(n) => {
@@ -204,11 +204,11 @@ fn main() {
                 }
                 (w, h)
             }
-            None => server::DEFAULT_WORLD_SIZE,
+            None => (200, 200),
         };
         let food_rate: u8 = match matches
             .value_of("food_rate")
-            .unwrap_or(&server::DEFAULT_FOOD_RATE.to_string())
+            .unwrap_or("10")
             .parse()
         {
             Ok(n) => {

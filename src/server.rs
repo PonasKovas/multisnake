@@ -12,10 +12,16 @@ use std::thread;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-pub const DEFAULT_WORLD_SIZE: (u16, u16) = (200, 200);
-pub const DEFAULT_MAX_PLAYERS: u16 = 50;
-pub const DEFAULT_GAME_SPEED: u8 = 10;
-pub const DEFAULT_FOOD_RATE: u8 = 10;
+// Magic networking bytes:
+const MAGIC_NET_REQUEST_TO_PLAY: u8 = 0x00;
+const MAGIC_NET_SERVER_STATUS: u8 = 0x01;
+const MAGIC_NET_CHANGE_DIRECTION: u8 = 0x02;
+const MAGIC_NET_DEATH: u8 = 0x03;
+const MAGIC_NET_GAME_DATA: u8 = 0x04;
+const MAGIC_NET_ERROR: u8 = 0x05;
+const MAGIC_NET_JOINED_GAME: u8 = 0x06;
+const MAGIC_NET_TOGGLE_FAST: u8 = 0x08;
+const MAGIC_NET_EXIT: u8 = 0x09;
 
 /// The main structure, holds everything related to server together
 pub struct Server {
@@ -300,9 +306,7 @@ impl Server {
     }
     /// Handles a new connection, idk what else to say.
     pub fn handle_new_connection(self, mut stream: TcpStream, address: SocketAddr) {
-        // Determine what the client wants:
-        // - If they send a \x00 byte followed by a nickname, they're here to play
-        // - If they send a \x01 byte they're here to fetch game stats: leaderboard and stuff
+        // Determine what the client wants
         let bytes = match read_from_stream(&mut stream) {
             Ok(bytes) => bytes,
             Err(_) => {
@@ -317,7 +321,7 @@ impl Server {
             return;
         }
 
-        if bytes[0] == 0x00 {
+        if bytes[0] == MAGIC_NET_REQUEST_TO_PLAY {
             // They're here to play
             // Get the nickname
             let mut nickname: String = match std::str::from_utf8(&bytes[1..]) {
@@ -325,8 +329,9 @@ impl Server {
                 Err(_) => {
                     // Can't read username
                     // Send message and drop the connection
-                    // \x05 at the beginning means that it's an error and that there's text following it
-                    send_to_stream(&mut stream, b"\x05can't read nickname");
+                    let mut message = vec![MAGIC_NET_ERROR];
+                    message.extend_from_slice(b"can't read nickname");
+                    send_to_stream(&mut stream, &message);
                     return;
                 }
             };
@@ -335,8 +340,9 @@ impl Server {
             // Make sure that the nickname is not too long and not too short
             if nickname.is_empty() || nickname.len() > 10 {
                 // Send message and drop the connection
-                // \x05 at the beginning means that it's an error and that there's text following it
-                send_to_stream(&mut stream, b"\x05nickname too short/long");
+                let mut message = vec![MAGIC_NET_ERROR];
+                message.extend_from_slice(b"nickname too short/long");
+                send_to_stream(&mut stream, &message);
                 return;
             }
             let mut players = self.players.lock().unwrap();
@@ -344,8 +350,9 @@ impl Server {
             let playing_now = players.len() as u16;
             if playing_now >= self.max_players {
                 // Send error and drop connection
-                // \x05 at the beginning means that it's an error and that there's text following it
-                send_to_stream(&mut stream, b"\x05server full");
+                let mut message = vec![MAGIC_NET_ERROR];
+                message.extend_from_slice(b"server full");
+                send_to_stream(&mut stream, &message);
                 return;
             }
             // generate an ID for this new player
@@ -364,7 +371,9 @@ impl Server {
             // Add a new player instance to the game
             if self.add_player(&mut players, &nickname, id).is_err() {
                 println!("Failed to spawn a player because there's not enough space on world");
-                send_to_stream(&mut stream, b"\x05not enough space in world. try again");
+                let mut message = vec![MAGIC_NET_ERROR];
+                message.extend_from_slice(b"not enough space in world. try again");
+                send_to_stream(&mut stream, &message);
                 return;
             }
             self.client_streams
@@ -376,7 +385,7 @@ impl Server {
 
             // Send the id to them
             let mut bytes: Vec<u8> = Vec::new();
-            bytes.extend_from_slice(&[0x06]); // \x06 means that it's the player's ID and world size
+            bytes.extend_from_slice(&[MAGIC_NET_JOINED_GAME]);
             bytes.extend_from_slice(&id.to_be_bytes()[..]); // the id -> 2 bytes
             bytes.extend_from_slice(&(self.world_size.0).to_be_bytes()[..]); // world width -> 2 bytes
             bytes.extend_from_slice(&(self.world_size.1).to_be_bytes()[..]); // world height -> 2 bytes
@@ -385,7 +394,7 @@ impl Server {
             if !address.ip().is_loopback() {
                 println!("{} connected with nickname {}", address, nickname);
             }
-        } else if bytes[0] == 0x01 {
+        } else if bytes[0] == MAGIC_NET_SERVER_STATUS {
             // Send the server status and drop connection
             self.send_server_data_to_stream(stream);
         }
@@ -528,7 +537,7 @@ impl Server {
                         break;
                     }
                 };
-                if bytes.len() == 1 && bytes[0] == 0x09 {
+                if bytes.len() == 1 && bytes[0] == MAGIC_NET_EXIT {
                     println!("\"{}\" disconnected", players[&id].nickname);
                     // Remove the snake
                     self.remove_snake(id, &mut players, &mut self.world.lock().unwrap());
@@ -537,8 +546,8 @@ impl Server {
 
                     break;
                 }
-                // Messages starting with \x02 contain a new direction that a snake faces
-                if bytes.len() == 2 && bytes[0] == 0x02 {
+
+                if bytes.len() == 2 && bytes[0] == MAGIC_NET_CHANGE_DIRECTION {
                     let new_direction = Direction::from_byte(bytes[1]);
                     // Make sure that the snake isn't doing a 180 degree turn, 'cause that shit illegal
                     if new_direction.is_opposite_of(players[&id].last_direction) {
@@ -547,8 +556,8 @@ impl Server {
                     // Otherwise save the new direction
                     players.get_mut(&id).unwrap().direction = new_direction;
                 }
-                // Messages starting with \x08 are requests to toggle fast mode
-                if bytes.len() == 1 && bytes[0] == 0x08 {
+
+                if bytes.len() == 1 && bytes[0] == MAGIC_NET_TOGGLE_FAST {
                     // Make sure the snake has at least 1 score
                     if players[&id].score == 0 {
                         continue;
@@ -645,7 +654,6 @@ impl Server {
                         players.get_mut(&foreign_id).unwrap().kills += 1;
                     }
                     // Send a message to them telling them that they're dead
-                    // message starting with \x03 means that you died
                     send_to_stream(
                         &mut self
                             .client_streams
@@ -653,7 +661,7 @@ impl Server {
                             .unwrap()
                             .get_mut(&snake_id)
                             .unwrap(),
-                        &[0x03],
+                        &[MAGIC_NET_DEATH],
                     );
 
                     // Kill it
@@ -723,8 +731,7 @@ impl Server {
         // buffer that's going to be sent to all players
         let mut bytes: Vec<u8> = Vec::new();
 
-        // \x04 means that it's the game data
-        bytes.push(0x04);
+        bytes.push(MAGIC_NET_GAME_DATA);
 
         // amount of snakes in total -> 2 bytes
         bytes.extend_from_slice(&(players.len() as u16).to_be_bytes()[..]);
