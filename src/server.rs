@@ -1,6 +1,7 @@
 #[cfg(feature = "bots")]
 mod bot;
 
+use multimap::MultiMap;
 use rand::prelude::*;
 use std::collections::{HashMap, VecDeque};
 use std::io;
@@ -63,7 +64,7 @@ pub struct FField {
     pub amount: u8,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SnakePartPos(u16, u16);
 
 #[derive(Copy, Clone, Debug)]
@@ -670,7 +671,12 @@ impl Server {
         let mut players = self.players.lock().unwrap();
         let mut world = self.world.lock().unwrap();
         let ids: Vec<u16> = players.keys().copied().collect();
-        'snake: for snake_id in ids {
+        // This vector contains all snake's head positions, 1 for each snake, or 2 if the snake is in fast mode
+        // After moving all the snakes, all positions in this vector will be checked for crashes
+        // And if no crashes will be detected, all food on those fields will be eaten
+        let mut headposition_to_check: MultiMap<SnakePartPos, u16> =
+            MultiMap::with_capacity(players.len());
+        for snake_id in ids {
             // If snake not long enough anymore, turn off fast mode
             let snake = players.get_mut(&snake_id).unwrap();
             if snake.fast_mode && snake.score < 1 {
@@ -698,47 +704,7 @@ impl Server {
                 new_head_pos.0 = (((new_head_pos.0 as i32 + dx) + width) % width) as u16;
                 new_head_pos.1 = (((new_head_pos.1 as i32 + dy) + height) % height) as u16;
 
-                // Check if crashed
-                if world.snake_parts[self.sfield_index(new_head_pos)].id != 0 {
-                    // CRASH!
-                    let foreign_id = world.snake_parts[self.sfield_index(new_head_pos)].id;
-                    // Add a kill for the snake that killed it, unless it was a suicide
-                    if foreign_id != snake_id {
-                        players.get_mut(&foreign_id).unwrap().kills += 1;
-                    }
-                    // Send a message to them telling them that they're dead
-                    send_to_stream(
-                        &mut self
-                            .client_streams
-                            .lock()
-                            .unwrap()
-                            .get_mut(&snake_id)
-                            .unwrap(),
-                        &[MAGIC_NET_DEATH],
-                    );
-
-                    // Kill it
-                    self.remove_snake(snake_id, &mut players, &mut world);
-                    self.client_streams.lock().unwrap().remove(&snake_id);
-
-                    // Move onto the next snake
-                    continue 'snake;
-                }
-
-                // Eat all the food on the head position
-                for foodfield in self.sf_to_ff_index(new_head_pos).iter() {
-                    players.get_mut(&snake_id).unwrap().score +=
-                        world.foods[*foodfield].amount as u16;
-                    world.foods[*foodfield].amount = 0;
-                }
-
-                // Add the new part to the head
-                players
-                    .get_mut(&snake_id)
-                    .unwrap()
-                    .parts
-                    .push_back(new_head_pos);
-                world.snake_parts[self.sfield_index(new_head_pos)].id = snake_id;
+                headposition_to_check.insert(new_head_pos, snake_id);
             }
 
             // If in fast mode, remove 1 score
@@ -774,6 +740,55 @@ impl Server {
                     }
                 }
             }
+        }
+
+        // Now check all the head positions
+        let mut crashed_snakes: Vec<u16> = Vec::new();
+        for (field, ids) in headposition_to_check {
+            // Check if crashed
+            // If there's more than one, they all crash
+            if ids.len() > 1 {
+                for id in ids {
+                    crashed_snakes.push(id);
+                    // No need to add kills to anyone,
+                    // because all the other snakes
+                    // who might be responsible for this
+                    // death are also dead.
+                }
+                continue;
+            }
+            if world.snake_parts[self.sfield_index(field)].id != 0 {
+                // Crash
+                crashed_snakes.push(ids[0]);
+                // Add a kill for the snake that killed it, unless it was a suicide
+                let foreign_id = world.snake_parts[self.sfield_index(field)].id;
+                if foreign_id != ids[0] {
+                    players.get_mut(&foreign_id).unwrap().kills += 1;
+                }
+                continue;
+            }
+            // Otherwise, if there are no crashes:
+            // Eat all the food on the head position
+            for foodfield in self.sf_to_ff_index(field).iter() {
+                players.get_mut(&ids[0]).unwrap().score += world.foods[*foodfield].amount as u16;
+                world.foods[*foodfield].amount = 0;
+            }
+            // And add the new part to the head
+            players.get_mut(&ids[0]).unwrap().parts.push_back(field);
+            world.snake_parts[self.sfield_index(field)].id = ids[0];
+        }
+
+        // Now kill all the snakes that crashed
+        for id in crashed_snakes {
+            // Send a message to them telling them that they're dead
+            send_to_stream(
+                &mut self.client_streams.lock().unwrap().get_mut(&id).unwrap(),
+                &[MAGIC_NET_DEATH],
+            );
+
+            // Kill it
+            self.remove_snake(id, &mut players, &mut world);
+            self.client_streams.lock().unwrap().remove(&id);
         }
     }
     /// Send game data to all connected players
