@@ -464,9 +464,20 @@ impl Server {
             // If there's another snake part already there, generate another position,
             let mut world = self.world.lock().unwrap();
             for part in &[head_pos, part2_pos, part3_pos] {
-                if world.snake_parts[self.sfield_index(*part)].id != 0 {
-                    // There's another snake here, try another position
-                    continue 'field;
+                // Check all fields in a 7 field radius
+                for x in -7..=7 {
+                    for y in -7..=7 {
+                        let field_pos = SnakePartPos(
+                            ((part.0 as i32 + x + self.world_size.0 as i32)
+                                % self.world_size.0 as i32) as u16,
+                            ((part.1 as i32 + y + self.world_size.1 as i32)
+                                % self.world_size.1 as i32) as u16,
+                        );
+                        if world.snake_parts[self.sfield_index(field_pos)].id != 0 {
+                            // There's another snake here, try another position
+                            continue 'field;
+                        }
+                    }
                 }
             }
 
@@ -509,10 +520,12 @@ impl Server {
         bytes.push(self.game_speed);
 
         let players = self.players.lock().unwrap();
-        
+
         // Top 9 or less players sorted by score
-        let mut scores: Vec<(u16, &String)> = players.values()
-            .map(|player| (player.score, &player.nickname)).collect();
+        let mut scores: Vec<(u16, &String)> = players
+            .values()
+            .map(|player| (player.score, &player.nickname))
+            .collect();
         scores.sort_unstable();
         scores.reverse();
         scores.truncate(9);
@@ -527,8 +540,10 @@ impl Server {
             bytes.extend_from_slice(&score.to_be_bytes()[..]);
         }
         // Top 9 or less players sorted by kills
-        let mut scores: Vec<(u16, &String)> = players.values()
-            .map(|player| (player.kills, &player.nickname)).collect();
+        let mut scores: Vec<(u16, &String)> = players
+            .values()
+            .map(|player| (player.kills, &player.nickname))
+            .collect();
         scores.sort_unstable();
         scores.reverse();
         scores.truncate(9);

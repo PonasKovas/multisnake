@@ -149,22 +149,14 @@ fn main() {
                 return;
             }
         };
-        let max_players: u16 = match matches
-            .value_of("max_players")
-            .unwrap_or("50")
-            .parse()
-        {
+        let max_players: u16 = match matches.value_of("max_players").unwrap_or("50").parse() {
             Ok(n) => n,
             Err(_) => {
                 println!("Failed to parse max players!");
                 return;
             }
         };
-        let game_speed: u8 = match matches
-            .value_of("game_speed")
-            .unwrap_or("10")
-            .parse()
-        {
+        let game_speed: u8 = match matches.value_of("game_speed").unwrap_or("10").parse() {
             Ok(n) => {
                 if n == 0 {
                     println!("Game speed can't be 0!");
@@ -206,11 +198,7 @@ fn main() {
             }
             None => (200, 200),
         };
-        let food_rate: u8 = match matches
-            .value_of("food_rate")
-            .unwrap_or("10")
-            .parse()
-        {
+        let food_rate: u8 = match matches.value_of("food_rate").unwrap_or("10").parse() {
             Ok(n) => {
                 if n < 1 {
                     println!("Food rate can not be 0!");

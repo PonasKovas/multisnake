@@ -656,8 +656,10 @@ pub fn get_place_by_kills(snakes_data: &HashMap<u16, (String, u16, u16, bool)>, 
 pub fn get_top_by_score(
     snakes_data: &HashMap<u16, (String, u16, u16, bool)>,
 ) -> Vec<(String, u16)> {
-    let mut scores: Vec<(String, u16)> = snakes_data.iter()
-        .map(|(_id, (nickname, score, _kills, _fast_mode))| (nickname.clone(), *score)).collect();
+    let mut scores: Vec<(String, u16)> = snakes_data
+        .iter()
+        .map(|(_id, (nickname, score, _kills, _fast_mode))| (nickname.clone(), *score))
+        .collect();
     scores.sort_unstable_by_key(|(nickname, score)| (*score, nickname.clone()));
     scores.reverse();
     scores
@@ -666,8 +668,10 @@ pub fn get_top_by_score(
 pub fn get_top_by_kills(
     snakes_data: &HashMap<u16, (String, u16, u16, bool)>,
 ) -> Vec<(String, u16)> {
-    let mut scores: Vec<(String, u16)> = snakes_data.iter()
-        .map(|(_id, (nickname, _score, kills, _fast_mode))| (nickname.clone(), *kills)).collect();
+    let mut scores: Vec<(String, u16)> = snakes_data
+        .iter()
+        .map(|(_id, (nickname, _score, kills, _fast_mode))| (nickname.clone(), *kills))
+        .collect();
     scores.sort_unstable_by_key(|(nickname, kills)| (*kills, nickname.clone()));
     scores.reverse();
     scores
