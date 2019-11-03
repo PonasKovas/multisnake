@@ -2,7 +2,7 @@ use crossterm::input::AsyncReader;
 use crossterm::{input, AlternateScreen, InputEvent, KeyEvent, RawScreen};
 use lazy_static::lazy_static;
 use std::collections::HashMap;
-use std::io::{stdin, Read, Write};
+use std::io::{stdin, stdout, Read, Write};
 use std::net::TcpStream;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -589,8 +589,10 @@ pub fn draw(
     }
 
     // Print and flush the output
-    print!("{}", to_print);
-    std::io::stdout().flush().unwrap();
+    let stdout = stdout();
+    let mut lock = stdout.lock();
+    lock.write(to_print.as_bytes()).unwrap();
+    lock.flush().unwrap();
 }
 
 /// Get place amongst all alive snakes sorting by score
