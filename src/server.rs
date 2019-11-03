@@ -205,6 +205,7 @@ impl Server {
         println!("Server initialized");
 
         // Start the game logic
+        let tick_time = Duration::from_micros((1_000_000f64 / server.game_speed as f64) as u64);
         loop {
             // Each loop is a 'tick'
             let tick_start = Instant::now();
@@ -219,9 +220,7 @@ impl Server {
             server.send_data_to_players();
 
             // Wait for next tick, if need to
-            let wait_for = Duration::from_micros((1_000_000f64 / server.game_speed as f64) as u64)
-                .checked_sub(tick_start.elapsed());
-            if let Some(x) = wait_for {
+            if let Some(x) = tick_time.checked_sub(tick_start.elapsed()) {
                 sleep(x);
             }
         }
