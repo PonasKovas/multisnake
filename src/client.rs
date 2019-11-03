@@ -1,7 +1,7 @@
 use crossterm::input::AsyncReader;
 use crossterm::{input, AlternateScreen, InputEvent, KeyEvent, RawScreen};
 use lazy_static::lazy_static;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::io::{stdin, Read, Write};
 use std::net::TcpStream;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -656,51 +656,21 @@ pub fn get_place_by_kills(snakes_data: &HashMap<u16, (String, u16, u16, bool)>, 
 pub fn get_top_by_score(
     snakes_data: &HashMap<u16, (String, u16, u16, bool)>,
 ) -> Vec<(String, u16)> {
-    // Put all the snakes in a binary tree map
-    let mut scores: BTreeMap<u16, Vec<&String>> = BTreeMap::new();
-    for (nickname, score, _kills, _) in snakes_data.values() {
-        match scores.get_mut(score) {
-            Some(other_nicknames) => {
-                other_nicknames.push(nickname);
-            }
-            None => {
-                scores.insert(*score, vec![nickname]).unwrap_none();
-            }
-        }
-    }
-    let scores = scores.iter().rev();
-    let mut result = Vec::new();
-    for s in scores {
-        for nick in s.1 {
-            result.push(((*nick).clone(), *s.0));
-        }
-    }
-    result
+    let mut scores: Vec<(String, u16)> = snakes_data.iter()
+        .map(|(_id, (nickname, score, _kills, _fast_mode))| (nickname.clone(), *score)).collect();
+    scores.sort_unstable_by_key(|(nickname, score)| (*score, nickname.clone()));
+    scores.reverse();
+    scores
 }
 
 pub fn get_top_by_kills(
     snakes_data: &HashMap<u16, (String, u16, u16, bool)>,
 ) -> Vec<(String, u16)> {
-    // Put all the snakes in a binary tree map
-    let mut scores: BTreeMap<u16, Vec<&String>> = BTreeMap::new();
-    for (nickname, _score, kills, _) in snakes_data.values() {
-        match scores.get_mut(kills) {
-            Some(other_nicknames) => {
-                other_nicknames.push(nickname);
-            }
-            None => {
-                scores.insert(*kills, vec![nickname]).unwrap_none();
-            }
-        }
-    }
-    let scores = scores.iter().rev();
-    let mut result = Vec::new();
-    for s in scores {
-        for nick in s.1 {
-            result.push(((*nick).clone(), *s.0));
-        }
-    }
-    result
+    let mut scores: Vec<(String, u16)> = snakes_data.iter()
+        .map(|(_id, (nickname, _score, kills, _fast_mode))| (nickname.clone(), *kills)).collect();
+    scores.sort_unstable_by_key(|(nickname, kills)| (*kills, nickname.clone()));
+    scores.reverse();
+    scores
 }
 
 /// Sends bytes to stream, with the buffer length appended to the beginning as an u8 integer
