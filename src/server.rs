@@ -41,6 +41,8 @@ pub struct Server {
     pub food_rate: u8,
     /// The port that the server binds to
     pub port: u16,
+    /// The amount of bots playing in this server
+    pub bots: u16,
 }
 
 /// Holds snake parts and food data together
@@ -155,6 +157,7 @@ impl Server {
             game_speed,
             food_rate,
             port,
+            bots: bot_amount,
         };
 
         println!("Done! ({:.4} seconds)", now.elapsed().as_secs_f64());
@@ -492,6 +495,8 @@ impl Server {
         let mut bytes: Vec<u8> = Vec::new();
         // max players -> 2 bytes
         bytes.extend_from_slice(&self.max_players.to_be_bytes()[..]);
+        // amount of bots -> 2 bytes
+        bytes.extend_from_slice(&self.bots.to_be_bytes()[..]);
         // players playing now -> 2 bytes
         let playing_now = self.players.lock().unwrap().len() as u16;
         bytes.extend_from_slice(&playing_now.to_be_bytes()[..]);
@@ -503,7 +508,40 @@ impl Server {
         // game speed -> 1 byte
         bytes.push(self.game_speed);
 
-        // TODO: send leaderboard
+        let players = self.players.lock().unwrap();
+        
+        // Top 9 or less players sorted by score
+        let mut scores: Vec<(u16, &String)> = players.values()
+            .map(|player| (player.score, &player.nickname)).collect();
+        scores.sort_unstable();
+        scores.reverse();
+        scores.truncate(9);
+        // Amount of players in this list -> 1 byte
+        bytes.push(scores.len() as u8);
+        for (score, nickname) in scores {
+            // Nickname length -> 1 byte
+            bytes.push(nickname.len() as u8);
+            // Nickname -> 0-10 bytes
+            bytes.extend_from_slice(nickname.as_bytes());
+            // Score -> 2 bytes
+            bytes.extend_from_slice(&score.to_be_bytes()[..]);
+        }
+        // Top 9 or less players sorted by kills
+        let mut scores: Vec<(u16, &String)> = players.values()
+            .map(|player| (player.kills, &player.nickname)).collect();
+        scores.sort_unstable();
+        scores.reverse();
+        scores.truncate(9);
+        // Amount of players in this list -> 1 byte
+        bytes.push(scores.len() as u8);
+        for (kills, nickname) in scores {
+            // Nickname length -> 1 byte
+            bytes.push(nickname.len() as u8);
+            // Nickname -> 0-10 bytes
+            bytes.extend_from_slice(nickname.as_bytes());
+            // Score -> 2 bytes
+            bytes.extend_from_slice(&kills.to_be_bytes()[..]);
+        }
 
         send_to_stream(&mut stream, &bytes);
     }
@@ -827,6 +865,7 @@ impl Clone for Server {
             game_speed: self.game_speed,
             food_rate: self.food_rate,
             port: self.port,
+            bots: self.bots,
         }
     }
 }
