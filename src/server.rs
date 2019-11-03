@@ -1,4 +1,3 @@
-#[cfg(feature = "bots")]
 mod bot;
 
 use multimap::MultiMap;

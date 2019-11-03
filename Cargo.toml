@@ -5,25 +5,14 @@ authors = ["Ponas Kovas"]
 edition = "2018"
 
 [dependencies]
-term_size = { version = "0.3.1", optional = true }
-rand = { version = "0.7.0", optional = true }
+term_size = "0.3.1"
+rand = "0.7.0"
 clap = "2.33.0"
-dns-lookup = { version = "1.0.1", optional = true }
-lazy_static = { version = "1.4.0", optional = true }
-multimap = { version = "0.7.0", optional = true }
-
-[features]
-default = ["client", "server", "bots"]
-
-# client side code, launch with --client
-client = ["term_size", "crossterm", "dns-lookup", "lazy_static"]
-# server side code, launch with --server
-server = ["rand", "multimap"]
-# Bots module for the server
-bots = ["server"]
+dns-lookup = "1.0.1"
+lazy_static = "1.4.0"
+multimap = "0.7.0"
 
 [dependencies.crossterm]
 version = "0.12.1"
 default-features = false
 features = ["input", "screen"]
-optional = true
