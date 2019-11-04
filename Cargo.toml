@@ -10,7 +10,6 @@ rand = "0.7.0"
 clap = "2.33.0"
 dns-lookup = "1.0.1"
 lazy_static = "1.4.0"
-multimap = "0.7.0"
 
 [dependencies.crossterm]
 version = "0.12.1"

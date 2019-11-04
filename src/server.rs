@@ -1,6 +1,5 @@
 mod bot;
 
-use multimap::MultiMap;
 use rand::prelude::*;
 use std::collections::{HashMap, VecDeque};
 use std::io;
@@ -63,7 +62,7 @@ pub struct FField {
     pub amount: u8,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct SnakePartPos(u16, u16);
 
 #[derive(Copy, Clone, Debug)]
@@ -640,7 +639,6 @@ impl Server {
                             .next()
                             .expect("food_iterator unexpectedly ended");
                     }
-                    world_lock.snake_parts[self.sfield_index(*coordinates)].id = 0;
                 }
                 None => {
                     break;
@@ -652,10 +650,15 @@ impl Server {
             self.add_food(&mut rng, &mut world_lock);
         }
 
-        // Remove all left-over snake parts from world
-        for i in 0..players_lock[&id].parts.len().saturating_sub(snake_length) {
-            let field = players_lock[&id].parts[i + snake_length];
-            world_lock.snake_parts[self.sfield_index(field)].id = 0;
+        // Remove all snake parts from world
+        for field in &players_lock[&id].parts {
+            let f = world_lock
+                .snake_parts
+                .get_mut(self.sfield_index(*field))
+                .unwrap();
+            if f.id == id {
+                f.id = 0;
+            }
         }
 
         // Remove the player object from the players list
@@ -672,8 +675,8 @@ impl Server {
         // This vector contains all snake's head positions, 1 for each snake, or 2 if the snake is in fast mode
         // After moving all the snakes, all positions in this vector will be checked for crashes
         // And if no crashes will be detected, all food on those fields will be eaten
-        let mut headposition_to_check: MultiMap<SnakePartPos, u16> =
-            MultiMap::with_capacity(players.len());
+        let mut headposition_to_check: HashMap<SnakePartPos, Vec<u16>> =
+            HashMap::with_capacity(players.len());
         for snake_id in ids {
             // If snake not long enough anymore, turn off fast mode
             let snake = players.get_mut(&snake_id).unwrap();
@@ -681,17 +684,16 @@ impl Server {
                 snake.fast_mode = false;
             }
 
+            if players[&snake_id].direction != players[&snake_id].last_direction {
+                // Change the last_direction
+                players.get_mut(&snake_id).unwrap().last_direction = players[&snake_id].direction;
+            }
+
             // If snake in fast mode make it move twice
             let moves = if players[&snake_id].fast_mode { 2 } else { 1 };
 
             // move it
-            for _ in 0..moves {
-                if players[&snake_id].direction != players[&snake_id].last_direction {
-                    // Change the last_direction
-                    players.get_mut(&snake_id).unwrap().last_direction =
-                        players[&snake_id].direction;
-                }
-
+            for _ in 1..=moves {
                 // Calculate the new head position
                 let mut new_head_pos = *players[&snake_id].parts.back().unwrap();
 
@@ -702,7 +704,17 @@ impl Server {
                 new_head_pos.0 = (((new_head_pos.0 as i32 + dx) + width) % width) as u16;
                 new_head_pos.1 = (((new_head_pos.1 as i32 + dy) + height) % height) as u16;
 
-                headposition_to_check.insert(new_head_pos, snake_id);
+                // Add to snake (but not to world yet)
+                players
+                    .get_mut(&snake_id)
+                    .unwrap()
+                    .parts
+                    .push_back(new_head_pos);
+
+                headposition_to_check
+                    .entry(new_head_pos)
+                    .or_insert_with(Vec::new)
+                    .push(snake_id);
             }
 
             // If in fast mode, remove 1 score
@@ -771,10 +783,13 @@ impl Server {
                 players.get_mut(&ids[0]).unwrap().score += world.foods[*foodfield].amount as u16;
                 world.foods[*foodfield].amount = 0;
             }
-            // And add the new part to the head
-            players.get_mut(&ids[0]).unwrap().parts.push_back(field);
+            // And add the new part to the world
             world.snake_parts[self.sfield_index(field)].id = ids[0];
         }
+
+        // Remove all duplicates from crashed_snakes (its possible to crash twice, when in fast mode)
+        crashed_snakes.sort_unstable();
+        crashed_snakes.dedup();
 
         // Now kill all the snakes that crashed
         for id in crashed_snakes {

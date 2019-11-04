@@ -574,7 +574,7 @@ pub fn draw(
         for ln in 2..11 {
             let player = board.next();
             let (nickname, score) = match player {
-                Some((n, s)) => (n, format!("({})", s)),
+                Some((s, n)) => (n, format!("({})", s)),
                 None => ("".to_string(), "".to_string()),
             };
             to_print += &format!("\x1b[{line};{column}H\x1b[100;1m{place}. \x1b[0m\x1b[100m{nickname}{padding}{score}\x1b[0m",
@@ -591,7 +591,7 @@ pub fn draw(
     // Print and flush the output
     let stdout = stdout();
     let mut lock = stdout.lock();
-    lock.write(to_print.as_bytes()).unwrap();
+    lock.write_all(to_print.as_bytes()).unwrap();
     lock.flush().unwrap();
 }
 
@@ -612,17 +612,13 @@ pub fn get_place_by_score(snakes_data: &HashMap<u16, (String, u16, u16, bool)>, 
         }
         place += 1;
     }
-    let place = place.to_string();
-    let last_digit = place.chars().last().unwrap();
-    if last_digit == '1' {
-        place + &"st".to_string()
-    } else if last_digit == '2' {
-        place + &"nd".to_string()
-    } else if last_digit == '3' {
-        place + &"rd".to_string()
-    } else {
-        place + &"th".to_string()
-    }
+    let suffix = match place % 10 {
+        1 => "st",
+        2 => "nd",
+        3 => "rd",
+        _ => "td",
+    };
+    format!("{}{}", place, suffix)
 }
 
 /// Get place amongst all alive snakes sorting by kills
@@ -642,39 +638,35 @@ pub fn get_place_by_kills(snakes_data: &HashMap<u16, (String, u16, u16, bool)>, 
         }
         place += 1;
     }
-    let place = place.to_string();
-    let last_digit = place.chars().last().unwrap();
-    if last_digit == '1' {
-        place + &"st".to_string()
-    } else if last_digit == '2' {
-        place + &"nd".to_string()
-    } else if last_digit == '3' {
-        place + &"rd".to_string()
-    } else {
-        place + &"th".to_string()
-    }
+    let suffix = match place % 10 {
+        1 => "st",
+        2 => "nd",
+        3 => "rd",
+        _ => "td",
+    };
+    format!("{}{}", place, suffix)
 }
 
 pub fn get_top_by_score(
     snakes_data: &HashMap<u16, (String, u16, u16, bool)>,
-) -> Vec<(String, u16)> {
-    let mut scores: Vec<(String, u16)> = snakes_data
+) -> Vec<(u16, String)> {
+    let mut scores: Vec<(u16, String)> = snakes_data
         .iter()
-        .map(|(_id, (nickname, score, _kills, _fast_mode))| (nickname.clone(), *score))
+        .map(|(_id, (nickname, score, _kills, _fast_mode))| (*score, nickname.clone()))
         .collect();
-    scores.sort_unstable_by_key(|(nickname, score)| (*score, nickname.clone()));
+    scores.sort_unstable();
     scores.reverse();
     scores
 }
 
 pub fn get_top_by_kills(
     snakes_data: &HashMap<u16, (String, u16, u16, bool)>,
-) -> Vec<(String, u16)> {
-    let mut scores: Vec<(String, u16)> = snakes_data
+) -> Vec<(u16, String)> {
+    let mut scores: Vec<(u16, String)> = snakes_data
         .iter()
-        .map(|(_id, (nickname, _score, kills, _fast_mode))| (nickname.clone(), *kills))
+        .map(|(_id, (nickname, _score, kills, _fast_mode))| (*kills, nickname.clone()))
         .collect();
-    scores.sort_unstable_by_key(|(nickname, kills)| (*kills, nickname.clone()));
+    scores.sort_unstable();
     scores.reverse();
     scores
 }
