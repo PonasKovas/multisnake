@@ -4,9 +4,6 @@ mod client;
 mod server;
 
 use dns_lookup::lookup_host;
-use std::convert::TryInto;
-use std::io::{stdin, BufRead};
-use std::net::SocketAddr;
 use std::num::NonZeroU8;
 use std::str::FromStr;
 use structopt::StructOpt;
@@ -61,28 +58,39 @@ impl FromStr for Nickname {
 #[derive(StructOpt)]
 enum Args {
     Server {
-        #[structopt(help = "Adds bots to the game")]
+        /// Amount of bots in the game (0-65535)
+        #[structopt(default_value = "0", short = "b")]
         bots: u16,
-        #[structopt(
-            help = "Rate of how much food should be constantly in the world in relation to the world size, bigger number = less food",
-            default_value = "10"
-        )]
+
+        /// Rate of how much food should be constantly in the world in relation to the world size, bigger number = less food
+        #[structopt(default_value = "10", short = "f")]
         food_rate: NonZeroU8,
-        #[structopt(help = "Ticks per second (1-255)", default_value = "10")]
+
+        /// Ticks per second (1-255)
+        #[structopt(default_value = "10", short = "s")]
         game_speed: NonZeroU8,
-        #[structopt(help = "Player limit for the server (0-65535)", default_value = "50")]
+
+        /// Player limit for the server (0-65535)
+        #[structopt(default_value = "50", short = "m")]
         max_players: u16,
-        #[structopt(help = "The size of the world (20-65535)", default_value = "200x200")]
+
+        /// The size of the world (20-65535)
+        #[structopt(default_value = "200x200", short = "w")]
         world_size: WorldSize,
-        #[structopt(help = "Initializes server on this port", default_value = "50403")]
+
+        /// Initializes server on this port
+        #[structopt(default_value = "50403", short = "p")]
         port: u16,
     },
     Client {
-        #[structopt(help = "Your nickname (1-10 characters)")]
+        /// Your nickname (1-10 characters)
         nickname: Nickname,
-        #[structopt(help = "IP address of the server")]
+
+        /// IP address of the server
         ip: String,
-        #[structopt(help = "Port of the server")]
+
+        /// Port of the server
+        #[structopt(default_value = "50403")]
         port: u16,
     },
 }
@@ -107,7 +115,7 @@ fn main() {
                 food_rate.into(),
                 bots,
             );
-        }
+        },
         Args::Client {
             nickname: Nickname(nickname),
             mut ip,
