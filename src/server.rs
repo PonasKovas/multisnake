@@ -636,15 +636,15 @@ impl Server {
         for i in 0..snake_length {
             match players_lock[&id].parts.get(i) {
                 Some(coordinates) => {
-                    for field in self.sf_to_ff_index(*coordinates).iter() {
-                        let to_add = food_iterator.next().expect("food_iterator unexpectedly ended");
-                        if world_lock.foods[*field].amount as u16 + to_add as u16 > 255u16 {
-                            world_lock.foods[*field].amount = 255;
-                            for _ in 0..(world_lock.foods[*field].amount as u16 + to_add as u16 - 255u16) {
-                                self.add_food(&mut rng, &mut world_lock);
-                            }
+                    let to_add = food_iterator.next().expect("food_iterator unexpectedly ended");
+                    let available_indexes = self.sf_to_ff_index(*coordinates);
+                    // Add the food randomly there
+                    for _ in 0..to_add {
+                        let ff_index = available_indexes[rng.gen::<usize>() % 4];
+                        if world_lock.foods[ff_index].amount < 255 {
+                            world_lock.foods[ff_index].amount += 1;
                         } else {
-                            world_lock.foods[*field].amount += to_add;
+                            self.add_food(&mut rng, &mut world_lock);
                         }
                     }
                 }
@@ -960,7 +960,7 @@ pub fn send_to_stream(stream: &mut TcpStream, data: &[u8]) {
 /// Takes a score as an argument and returns a vector of foods that they snake should drop
 pub fn score_to_foods(score: u16) -> Vec<u8> {
     // The count of separate fields that the food will be dropped to
-    let count = calc_length(score) * 4;
+    let count = calc_length(score);
     let mut foods = Vec::with_capacity(count);
 
     let mut n = score as i32;
