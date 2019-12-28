@@ -616,7 +616,7 @@ pub fn get_place_by_score(snakes_data: &HashMap<u16, (String, u16, u16, bool)>, 
         1 => "st",
         2 => "nd",
         3 => "rd",
-        _ => "td",
+        _ => "th",
     };
     format!("{}{}", place, suffix)
 }
@@ -642,7 +642,7 @@ pub fn get_place_by_kills(snakes_data: &HashMap<u16, (String, u16, u16, bool)>, 
         1 => "st",
         2 => "nd",
         3 => "rd",
-        _ => "td",
+        _ => "th",
     };
     format!("{}{}", place, suffix)
 }

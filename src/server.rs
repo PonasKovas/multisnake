@@ -22,6 +22,7 @@ const MAGIC_NET_JOINED_GAME: u8 = 0x06;
 const MAGIC_NET_TOGGLE_FAST: u8 = 0x08;
 const MAGIC_NET_EXIT: u8 = 0x09;
 
+
 /// The main structure, holds everything related to server together
 pub struct Server {
     /// Maximum limit of the players connected to this server
@@ -231,7 +232,7 @@ impl Server {
             rng.gen::<u32>() % (self.world_size.1 as u32 * 2),
         );
 
-        loop {
+        for _ in 0..(self.world_size.0 as u32 * self.world_size.1 as u32) {
             // Make sure there's no snake on the generated position
             if world_lock.snake_parts[self.ff_to_sf_index(pos)].id == 0
                 && world_lock.foods[self.ffield_index(pos)].amount < 255
@@ -377,6 +378,7 @@ impl Server {
                 send_to_stream(&mut stream, &message);
                 return;
             }
+
             self.client_streams
                 .lock()
                 .unwrap()
@@ -635,9 +637,15 @@ impl Server {
             match players_lock[&id].parts.get(i) {
                 Some(coordinates) => {
                     for field in self.sf_to_ff_index(*coordinates).iter() {
-                        world_lock.foods[*field].amount = food_iterator
-                            .next()
-                            .expect("food_iterator unexpectedly ended");
+                        let to_add = food_iterator.next().expect("food_iterator unexpectedly ended");
+                        if world_lock.foods[*field].amount as u16 + to_add as u16 > 255u16 {
+                            world_lock.foods[*field].amount = 255;
+                            for _ in 0..(world_lock.foods[*field].amount as u16 + to_add as u16 - 255u16) {
+                                self.add_food(&mut rng, &mut world_lock);
+                            }
+                        } else {
+                            world_lock.foods[*field].amount += to_add;
+                        }
                     }
                 }
                 None => {
@@ -645,8 +653,9 @@ impl Server {
                 }
             }
         }
-        // Calculate how much food is left to drop, and then drop it
-        for _ in 0..food_iterator.fold(0u16, |sum, x| sum + x as u16) {
+        // Calculate how much food is left to drop, and then drop it randomly in world
+        let to_drop_randomly = food_iterator.fold(0u16, |sum, x| sum + x as u16);
+        for _ in 0..to_drop_randomly {
             self.add_food(&mut rng, &mut world_lock);
         }
 
@@ -671,6 +680,7 @@ impl Server {
         // Move each snake to it's facing direction
         let mut players = self.players.lock().unwrap();
         let mut world = self.world.lock().unwrap();
+
         let ids: Vec<u16> = players.keys().copied().collect();
         // This vector contains all snake's head positions, 1 for each snake, or 2 if the snake is in fast mode
         // After moving all the snakes, all positions in this vector will be checked for crashes
@@ -742,8 +752,13 @@ impl Server {
             if players[&snake_id].fast_mode {
                 match tail_pos {
                     Some(pos) => {
-                        world.foods[self.sf_to_ff_index(pos)[thread_rng().gen::<usize>() % 4]]
-                            .amount = 1;
+                        let ff_index = self.sf_to_ff_index(pos)[thread_rng().gen::<usize>() % 4];
+                        if world.foods[ff_index].amount < 255 {
+                            world.foods[ff_index].amount += 1;
+                        } else {
+                            self.add_food(&mut thread_rng(), &mut world);
+                        }
+
                     }
                     None => {
                         self.add_food(&mut thread_rng(), &mut world);

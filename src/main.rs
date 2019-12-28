@@ -121,12 +121,6 @@ fn main() {
             mut ip,
             port,
         } => {
-            if let Some((w, h)) = term_size::dimensions() {
-                if w < 98 || h < 30 {
-                    println!("Your terminal size is only {}x{}! For better game experience I really recommend having the terminal at least 98x30", w, h);
-                }
-            }
-
             // Resolve the address of the entered hostname
             if ip != "localhost" {
                 match lookup_host(&ip).expect("could not resolve the IP").get(0) {
