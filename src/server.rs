@@ -22,7 +22,6 @@ const MAGIC_NET_JOINED_GAME: u8 = 0x06;
 const MAGIC_NET_TOGGLE_FAST: u8 = 0x08;
 const MAGIC_NET_EXIT: u8 = 0x09;
 
-
 /// The main structure, holds everything related to server together
 pub struct Server {
     /// Maximum limit of the players connected to this server
@@ -636,7 +635,9 @@ impl Server {
         for i in 0..snake_length {
             match players_lock[&id].parts.get(i) {
                 Some(coordinates) => {
-                    let to_add = food_iterator.next().expect("food_iterator unexpectedly ended");
+                    let to_add = food_iterator
+                        .next()
+                        .expect("food_iterator unexpectedly ended");
                     let available_indexes = self.sf_to_ff_index(*coordinates);
                     // Add the food randomly there
                     for _ in 0..to_add {
@@ -727,17 +728,22 @@ impl Server {
                     .push(snake_id);
             }
 
-            // If in fast mode, remove 1 score
+            // If in fast mode, remove score
+            let to_remove = if players[&snake_id].score <= 100 {
+                1
+            } else {
+                (players[&snake_id].score as f32 * 0.01) as u16
+            };
             if players[&snake_id].fast_mode {
-                players.get_mut(&snake_id).unwrap().score -= 1;
+                players.get_mut(&snake_id).unwrap().score -= to_remove;
             }
 
-            let mut tail_pos = None;
+            let mut tail_pos = Vec::new();
             // If needed, remove parts from tail
             for _ in 0..((players[&snake_id].parts.len() - 3) as u16)
                 .saturating_sub(calc_length(players[&snake_id].score) as u16)
             {
-                tail_pos = Some(
+                tail_pos.push(
                     players
                         .get_mut(&snake_id)
                         .unwrap()
@@ -745,23 +751,25 @@ impl Server {
                         .pop_front()
                         .unwrap(),
                 );
-                world.snake_parts[self.sfield_index(tail_pos.unwrap())].id = 0;
+                world.snake_parts[self.sfield_index(*tail_pos.last().unwrap())].id = 0;
             }
 
             // If was in fast mode, add food on tail
             if players[&snake_id].fast_mode {
-                match tail_pos {
-                    Some(pos) => {
-                        let ff_index = self.sf_to_ff_index(pos)[thread_rng().gen::<usize>() % 4];
+                if tail_pos.is_empty() {
+                    for _ in 0..to_remove {
+                        self.add_food(&mut thread_rng(), &mut world);
+                    }
+                } else {
+                    for _ in 0..to_remove {
+                        let ff_index = self
+                            .sf_to_ff_index(tail_pos[thread_rng().gen::<usize>() % tail_pos.len()])
+                            [thread_rng().gen::<usize>() % 4];
                         if world.foods[ff_index].amount < 255 {
                             world.foods[ff_index].amount += 1;
                         } else {
                             self.add_food(&mut thread_rng(), &mut world);
                         }
-
-                    }
-                    None => {
-                        self.add_food(&mut thread_rng(), &mut world);
                     }
                 }
             }
